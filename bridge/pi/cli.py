@@ -34,7 +34,7 @@ def main(argv=None):
   print(json.dumps(out));return 0 if ok else 1
  if a.cmd=="selftest":
   with tempfile.TemporaryDirectory() as d:
-   root=Path(d)/".config"/"jarvis-bridge";root.mkdir(parents=True);k=root/"key";t=root/"token";k.write_bytes(b"k"*32);t.write_bytes(b"t"*32);test=replace(c,listen_port=0,runner_key_path=k,bridge_token_path=t);from .server import BridgeServer;z=BridgeServer(test);th=threading.Thread(target=z.serve_forever);th.start()
+   root=Path(d)/".config"/"jarvis-bridge";root.mkdir(parents=True);k=root/"key";t=root/"token";k.write_bytes(b"k"*32);t.write_bytes(b"t"*32);test=replace(c,listen_port=0,runner_key_path=k,bridge_token_path=t);from .server import BridgeServer;z=BridgeServer(test,start_probe=False);th=threading.Thread(target=z.serve_forever);th.start()
    try:
     x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("GET","/v1/health");ok=x.getresponse().status==200;x.close()
     x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST","/v1/execute",b'{"action":"system.ping","arguments":{}}',{"X-Jarvis-Bridge-Token":"bad"});bad=x.getresponse().status==401;x.close()

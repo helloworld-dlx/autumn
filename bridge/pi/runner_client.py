@@ -6,6 +6,12 @@ from urllib.request import Request,build_opener,ProxyHandler,HTTPRedirectHandler
 from .config import ACTIONS
 class NoRedirect(HTTPRedirectHandler):
  def redirect_request(self,*args):return None
+def runner_health(c,timeout_seconds=3):
+ q=Request(c.runner_base_url+"/v1/health",method="GET")
+ try:
+  with build_opener(ProxyHandler({}),NoRedirect()).open(q,timeout=timeout_seconds) as x:
+   return x.status==200 and json.loads(x.read().decode())=={"status":"ok","protocol_version":"1.0","runner":"jarvis-windows-runner"}
+ except (HTTPError,URLError,TimeoutError,socket.timeout,ValueError,json.JSONDecodeError):return False
 def canonical_payload(r):return json.dumps({k:v for k,v in r.items() if k!="signature"},ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()
 def build_signed_request(action,arguments,c,key):
  if action not in ACTIONS or not isinstance(arguments,dict):raise ValueError("ACTION_NOT_ALLOWED")

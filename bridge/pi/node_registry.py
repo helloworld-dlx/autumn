@@ -10,6 +10,14 @@ PI5_CORE = {
     "capabilities": ["agent.main", "gateway", "bridge.forward"],
     "metadata": {},
 }
+WINDOWS_MAIN = {
+    "protocol_version": PROTOCOL_VERSION,
+    "node_id": "windows-main",
+    "node_type": "windows",
+    "node_version": "runner-v1",
+    "capabilities": ["system.status", "file.search", "file.return", "job.submit", "job.status", "job.cancel", "codex.submit"],
+    "metadata": {},
+}
 HEALTH_TTL = timedelta(seconds=90)
 PHONE_RECENT_TTL = timedelta(minutes=10)
 MAX_PUBLIC_NODES = 16

@@ -79,6 +79,8 @@ The Pi Bridge remains loopback on `127.0.0.1:27901`; Voice Bridge remains loopba
 
 Phase 3A-2 adds read-only loopback Pi Bridge queries: `GET /v1/nodes` and `GET /v1/nodes/{node_id}`. They expose only bounded safe descriptors; registration remains internal.
 
+Phase 3A-3 adds a Pi-side, read-only `GET /v1/health` probe to the existing Runner transport every 30 seconds. A valid health response registers or touches `windows-main`; a failed probe is quiet and lets the 90-second Registry TTL derive `OFFLINE`.
+
 ## 9. Phase 3A implementation boundary
 
 - **3A-2 — Pi Node Registry Core:** store and expose this descriptor shape only.

@@ -1,14 +1,29 @@
-import json,uuid
+import json,uuid,threading
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlsplit
 from .auth import load_secret,token_matches
 from .config import ACTIONS,validate_config
-from .runner_client import build_signed_request,call_runner,submit_job,job_status,cancel_job,job_result,authorization_request,authorization_approve,worker_control_status,worker_pause,worker_resume
-from .node_registry import NodeRegistry,PI5_CORE
+from .runner_client import build_signed_request,call_runner,submit_job,job_status,cancel_job,job_result,authorization_request,authorization_approve,worker_control_status,worker_pause,worker_resume,runner_health
+from .node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN
+PROBE_INTERVAL_SECONDS=30
 class BridgeServer(ThreadingHTTPServer):
  daemon_threads=True;request_queue_size=8
- def __init__(self,c):self.config=c;self.registry=NodeRegistry();self.registry.upsert({**PI5_CORE,"last_seen":None});super().__init__((c.listen_host,c.listen_port),Handler)
+ def __init__(self,c,start_probe=False):
+  self.config=c;self.registry=NodeRegistry();self.registry.upsert({**PI5_CORE,"last_seen":None});self._probe_stop=threading.Event();self._probe_thread=None;super().__init__((c.listen_host,c.listen_port),Handler)
+  if start_probe:
+   self._probe_thread=threading.Thread(target=self._probe_loop,name="windows-node-probe",daemon=True);self._probe_thread.start()
  def get_request(self):x,a=super().get_request();x.settimeout(15);return x,a
+ def probe_windows_once(self):
+  if not runner_health(self.config):return False
+  if self.registry.get("windows-main") is None:self.registry.upsert({**WINDOWS_MAIN,"last_seen":None})
+  else:self.registry.touch("windows-main")
+  return True
+ def _probe_loop(self):
+  while not self._probe_stop.is_set():
+   self.probe_windows_once();self._probe_stop.wait(PROBE_INTERVAL_SECONDS)
+ def shutdown(self):
+  self._probe_stop.set();super().shutdown()
+  if self._probe_thread:self._probe_thread.join(timeout=4)
 class Handler(BaseHTTPRequestHandler):
  protocol_version="HTTP/1.1";server_version="jarvis-bridge";sys_version=""
  def log_message(self,*args):pass
@@ -136,4 +151,4 @@ class Handler(BaseHTTPRequestHandler):
 
  def do_PUT(self):self.error(405,"METHOD_NOT_ALLOWED")
  def send_error(self,code,*args):self.error(405,"METHOD_NOT_ALLOWED")
-def create_server(c):validate_config(c);return BridgeServer(c)
+def create_server(c):validate_config(c);return BridgeServer(c,start_probe=True)

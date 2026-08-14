@@ -8,6 +8,7 @@
 
 **PHASE3A-1:** PASS / CLOSED
 **PHASE3A-2:** PASS / CLOSED — Pi in-memory Node Registry Core; loopback `GET /v1/nodes` and `GET /v1/nodes/pi5-core`; Windows/Xiaomi adapters remain deferred.
+**PHASE3A-3:** PASS / CLOSED — Pi-side read-only Runner health probe registers `windows-main`; Xiaomi adapter remains deferred.
 
 ## Current Product Truth
 
