@@ -5,7 +5,7 @@ from .auth import load_secret,token_matches
 from .config import ACTIONS,validate_config
 from .runner_client import build_signed_request,call_runner,submit_job,job_status,cancel_job,job_result,authorization_request,authorization_approve,worker_control_status,worker_pause,worker_resume,runner_health
 from .node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15
-PROBE_INTERVAL_SECONDS=30
+PROBE_INTERVAL_SECONDS=60
 class BridgeServer(ThreadingHTTPServer):
  daemon_threads=True;request_queue_size=8
  def __init__(self,c,start_probe=False):
@@ -20,6 +20,7 @@ class BridgeServer(ThreadingHTTPServer):
   return True
  def _probe_loop(self):
   while not self._probe_stop.is_set():
+   self.registry.touch("pi5-core")
    self.probe_windows_once();self._probe_stop.wait(PROBE_INTERVAL_SECONDS)
  def shutdown(self):
   self._probe_stop.set();super().shutdown()

@@ -26,7 +26,8 @@ XIAOMI15 = {
     "capabilities": ["voice.listen", "voice.speak", "open_url", "clipboard.set"],
     "metadata": {},
 }
-HEALTH_TTL = timedelta(seconds=90)
+PI_HEALTH_TTL = timedelta(seconds=90)
+WINDOWS_HEALTH_TTL = timedelta(seconds=180)
 PHONE_RECENT_TTL = timedelta(minutes=10)
 MAX_PUBLIC_NODES = 16
 _FIELDS = frozenset(("protocol_version", "node_id", "node_type", "node_version", "last_seen", "capabilities", "metadata"))
@@ -77,4 +78,5 @@ class NodeRegistry:
   if last_seen is None:return "UNKNOWN"
   age=self._clock()-last_seen
   if node_type=="phone":return "RECENT" if age<=PHONE_RECENT_TTL else "UNKNOWN"
-  return "ONLINE" if age<=HEALTH_TTL else "OFFLINE"
+  ttl = WINDOWS_HEALTH_TTL if node_type == "windows" else PI_HEALTH_TTL
+  return "ONLINE" if age<=ttl else "OFFLINE"

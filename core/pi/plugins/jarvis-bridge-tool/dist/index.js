@@ -36,6 +36,7 @@ export const BRIDGE_TOKEN_FILE = "/home/xyzlh/.config/jarvis-bridge/bridge_local
 // the path. Phase 3A-3: Bridge only accepts POST /v1/execute; the bare host
 // URL returns 404 NOT_FOUND.
 export const BRIDGE_HOST_ONLY_URL = "http://127.0.0.1:27901";
+export const BRIDGE_NODES_URL = "http://127.0.0.1:27901/v1/nodes";
 
 // Status codes that must NOT be retried / surfaced as opaque errors.
 // The runtime surfaces the original Bridge error body so the LLM can see
@@ -210,6 +211,17 @@ export async function callBridgeJob(jobAction, jobPayload, deps = {}) {
 
 const EmptyParams = Type.Object({}, { additionalProperties: false });
 
+export const AutumnNodesParams = Type.Union([
+  Type.Object({ action: Type.Literal("list") }, { additionalProperties: false }),
+  Type.Object(
+    {
+      action: Type.Literal("get"),
+      node_id: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z0-9][a-z0-9-]*$" }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 const DirectoryParams = Type.Object(
   {
     path: Type.String(),
@@ -373,6 +385,81 @@ function failResult(reason, details) {
     // last so caller-provided status can never overwrite it.
     details: Object.assign({ status: "failed", reason }, details || {}, { status: "failed" }),
   };
+}
+
+function queryFailedResult() {
+  return okResult({
+    status: "QUERY_FAILED",
+    message: "Node Registry is temporarily unavailable; device presence was not inferred.",
+  });
+}
+
+function safeNode(node) {
+  if (!node || typeof node !== "object") return null;
+  if (
+    typeof node.protocol_version !== "string" ||
+    typeof node.node_id !== "string" ||
+    typeof node.node_type !== "string" ||
+    typeof node.node_version !== "string" ||
+    !["ONLINE", "OFFLINE", "RECENT", "UNKNOWN"].includes(node.online) ||
+    !(node.last_seen === null || typeof node.last_seen === "string") ||
+    !Array.isArray(node.capabilities) ||
+    node.capabilities.length > 16 ||
+    !node.capabilities.every((capability) => typeof capability === "string" && /^[a-z][a-z0-9._]*$/.test(capability))
+  ) return null;
+  return {
+    protocol_version: node.protocol_version,
+    node_id: node.node_id,
+    node_type: node.node_type,
+    node_version: node.node_version,
+    online: node.online,
+    last_seen: node.last_seen,
+    capabilities: [...node.capabilities],
+  };
+}
+
+export async function callBridgeNodes(action, nodeId, deps = {}) {
+  if (action !== "list" && action !== "get") {
+    return { ok: false, status: 400, bridgeError: "invalid_action" };
+  }
+  if (action === "get" && (typeof nodeId !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(nodeId))) {
+    return { ok: false, status: 400, bridgeError: "invalid_node_id" };
+  }
+  const fetchImpl = deps.fetch ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") return { ok: false, status: 0, bridgeError: "bridge_unreachable" };
+  const url = action === "list" ? (deps.nodesUrl ?? BRIDGE_NODES_URL) : `${deps.nodesUrl ?? BRIDGE_NODES_URL}/${nodeId}`;
+  let response;
+  try {
+    response = await fetchImpl(url, { method: "GET", headers: { accept: "application/json" }, redirect: "manual" });
+  } catch {
+    return { ok: false, status: 0, bridgeError: "bridge_unreachable" };
+  }
+  let payload = null;
+  try { payload = await response.json(); } catch { return { ok: false, status: response.status, bridgeError: "invalid_response" }; }
+  if (response.status === 404 && action === "get") return { ok: false, status: 404, bridgeError: "node_not_found" };
+  if (!response.ok) return { ok: false, status: response.status, bridgeError: "registry_unavailable" };
+  return { ok: true, status: response.status, payload };
+}
+
+export async function execAutumnNodes(params, _config, deps) {
+  const action = params && params.action;
+  const nodeId = params && params.node_id;
+  if (action !== "list" && action !== "get") return queryFailedResult();
+  if (action === "list" && Object.keys(params).length !== 1) return queryFailedResult();
+  if (action === "get" && (!/^[a-z0-9][a-z0-9-]*$/.test(nodeId || "") || Object.keys(params).length !== 2)) return queryFailedResult();
+  const out = await callBridgeNodes(action, nodeId, deps || {});
+  if (!out.ok) {
+    if (out.bridgeError === "node_not_found") return okResult({ status: "NODE_NOT_FOUND", node_id: nodeId });
+    return queryFailedResult();
+  }
+  if (action === "list") {
+    if (!out.payload || !Array.isArray(out.payload.nodes) || out.payload.nodes.length > 16) return queryFailedResult();
+    const nodes = out.payload.nodes.map(safeNode);
+    if (nodes.some((node) => node === null)) return queryFailedResult();
+    return okResult({ status: "OK", nodes });
+  }
+  const node = safeNode(out.payload);
+  return node ? okResult({ status: "OK", node }) : queryFailedResult();
 }
 
 // Strip internal-only fields so they never reach user-visible output.
@@ -909,11 +996,12 @@ export async function execWorkerResume(_params, _config, deps) {
 }
 
 const PLUGIN_DESCRIPTION =
-  "OpenClaw Autumn tool plugin — sixteen fixed Bridge-backed tools. " +
+  "OpenClaw Autumn tool plugin — sixteen existing Bridge-backed tools plus one read-only Node Registry tool. " +
   "Seven legacy probes + two program tools preserved from Phase 3A-3. " +
   "Four Phase 2B-3B R1 worker tools: submit, status, cancel, result. " +
   "Two Phase 2B-4E2 authorization tools: authorization_request, authorization_approve. " +
   "Three Phase 2B-5B worker control tools: control_status, emergency_stop, resume. " +
+  "autumn_nodes observes only the current Pi Node Registry; capability never grants authorization. " +
   "Worker operations: archive.list, archive.create (backend=direct) + R1 General ProcessJobSpec (type=process, catalog executables) + Codex (backend=codex).";
 
 export default definePluginEntry({
@@ -922,6 +1010,19 @@ export default definePluginEntry({
   description: PLUGIN_DESCRIPTION,
   register(api) {
     const cfg = api.pluginConfig || {};
+
+    api.registerTool({
+      name: "autumn_nodes",
+      label: "Autumn node status",
+      description:
+        "Read-only current device presence and declared capabilities from the Pi Node Registry. " +
+        "Use for device availability, online state, or current capabilities. " +
+        "action=list or action=get with node_id. Presence is observational; CAPABILITY != AUTHORIZATION. " +
+        "QUERY_FAILED means the Registry could not be queried, not that a device is offline.",
+      parameters: AutumnNodesParams,
+      execute: async (toolCallId, _p, signal, onUpdate) =>
+        await execAutumnNodes(_p, cfg, cfg),
+    });
 
     // Five legacy tools
     api.registerTool({

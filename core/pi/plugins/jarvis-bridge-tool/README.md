@@ -1,12 +1,22 @@
 # Jarvis Bridge Tool (OpenClaw Plugin)
 
-Local OpenClaw tool plugin (Phase 2C-A). Exposes **exactly five fixed tools** that
+Local OpenClaw tool plugin. Exposes the existing fixed Bridge tools plus one
+read-only Node Registry observation tool. It
 proxy to the local Jarvis Bridge running at `127.0.0.1:27901`. The Bridge itself
 calls the Windows Runner. The plugin does **not** talk to the Runner directly,
 does **not** spawn shells, does **not** read or write arbitrary files, and does
 **not** expose the Bridge token, Runner key, or any signature/nonce.
 
 ## Tools
+
+### `autumn_nodes`
+
+The single Node observation tool accepts `{"action":"list"}` or
+`{"action":"get","node_id":"windows-main"}` and makes only a loopback
+`GET` request to the Pi Bridge Registry. It cannot touch/register a Node,
+execute a capability, or change authorization. `QUERY_FAILED` means only that
+the Registry query failed; it is not an offline assertion. Presence is
+observational and **CAPABILITY != AUTHORIZATION**.
 
 | Tool | Model parameters | Bridge action |
 |---|---|---|

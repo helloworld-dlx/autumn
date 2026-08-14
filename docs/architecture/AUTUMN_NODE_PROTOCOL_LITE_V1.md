@@ -1,6 +1,6 @@
 # Autumn Node Protocol Lite V1
 
-**Status:** Phase 3A-1 contract only.  No Node runtime or production behaviour is introduced by this document.
+**Status:** Phase 3A implementation contract. Node presence remains observational and transport-neutral.
 
 ## 1. Purpose
 
@@ -60,13 +60,13 @@ Capability names are lower-case, dot-separated technical declarations. They desc
 
 For Windows specifically: raw arbitrary shell, arbitrary `cmd.exe`/`powershell.exe` shell use and `shell=True` remain denied; Python/Node are structured catalog L3 and remain `AUTHORIZATION_REQUIRED`; delete and L5 remain hard-deny; `C:\` remains outside approved Windows file authority and the D: boundary remains. Node Protocol Lite changes none of this.
 
-## 7. Online semantics (design only)
+## 7. Online semantics
 
 - Pi: `ONLINE` when the Core/service health source is current; otherwise `OFFLINE`.
-- Windows: `ONLINE` when Runner heartbeat or `GET /v1/health` is current; otherwise `OFFLINE`.
+- Windows: `ONLINE` when Runner `GET /v1/health` is current; otherwise `OFFLINE`.
 - Phone: use `RECENT` only after recent PWA/Voice Bridge activity; use `UNKNOWN` when no reliable current observation exists. Do not infer a persistent connection.
 
-Suggested initial TTLs for a later implementation: Pi/Windows 90 seconds after a successful health observation; Phone 10 minutes after a PWA/Bridge activity observation. Expiry changes state only; it must not start a new presence framework.
+Implemented TTLs: Pi 90 seconds after a Core health observation; Windows 180 seconds after a successful Runner health observation; Phone 10 minutes after PWA/Bridge activity. Expiry changes state only; it does not start a new presence framework.
 
 ## 8. Existing transport mapping
 
@@ -79,18 +79,20 @@ The Pi Bridge remains loopback on `127.0.0.1:27901`; Voice Bridge remains loopba
 
 Phase 3A-2 adds read-only loopback Pi Bridge queries: `GET /v1/nodes` and `GET /v1/nodes/{node_id}`. They expose only bounded safe descriptors; registration remains internal.
 
-Phase 3A-3 adds a Pi-side, read-only `GET /v1/health` probe to the existing Runner transport every 30 seconds. A valid health response registers or touches `windows-main`; a failed probe is quiet and lets the 90-second Registry TTL derive `OFFLINE`.
+Phase 3A-3/3A-5 use a Pi-side, read-only `GET /v1/health` probe to the existing Runner transport every 60 seconds. A valid health response registers or touches `windows-main`; a failed probe is quiet and lets the 180-second Windows TTL derive `OFFLINE`.
 
 Phase 3A-4 phone presence is activity-based: a real PWA load/foreground activation or voice interaction makes the fixed `xiaomi15` descriptor `RECENT`; after the existing 10-minute phone TTL it becomes `UNKNOWN`. There is no periodic phone heartbeat, background polling, service-worker keepalive, wake lock, or generic Node write API.
+
+Phase 3A-5 adds the single read-only OpenClaw tool `autumn_nodes` with `{"action":"list"}` and `{"action":"get","node_id":"..."}`. It reads the Registry only through the loopback `GET` endpoints above. `QUERY_FAILED` means the Registry could not be queried and never implies that a Node is offline.
 
 ## 9. Phase 3A implementation boundary
 
 - **3A-2 — Pi Node Registry Core:** store and expose this descriptor shape only.
 - **3A-3 — Windows Node Adapter:** adapt existing Runner health and declared capabilities; do not alter Runner security or Job protocol.
 - **3A-4 — Xiaomi 15 Node Adapter:** adapt existing Companion/PWA observations only.
-- **3A-5 — Autumn integration + real acceptance:** integrate the adapters and run real acceptance.
+- **3A-5 — Autumn integration + real acceptance:** expose Registry observation through `autumn_nodes`; do not add device control or authorization.
 
-No item above is started by Phase 3A-1.
+Deferred capabilities remain outside the closed Phase 3A scope.
 
 ## 10. Deferred capabilities
 

@@ -1,8 +1,8 @@
 {
   "id": "jarvis-bridge-tool",
   "name": "Jarvis Bridge Tool",
-  "description": "Sixteen fixed tools that proxy to the local Jarvis Bridge at 127.0.0.1:27901. Seven legacy probes + two whitelisted program tools (Phase 3A-3) plus nine Phase 2B worker tools for the Windows Runner Job API (submit, status, cancel, result), authorization (request, approve) and worker control (status, emergency_stop, resume). Worker operations: archive.list, archive.create (backend=direct only) and Codex (backend=codex, requires authorization).",
-  "version": "0.3.0",
+  "description": "Sixteen existing Bridge-backed tools plus autumn_nodes, a read-only observation tool for the Pi Node Registry at 127.0.0.1:27901. autumn_nodes exposes only current node presence and declared capabilities; CAPABILITY != AUTHORIZATION.",
+  "version": "0.3.1",
   "activation": {
     "onStartup": true
   },
@@ -13,6 +13,7 @@
   },
   "contracts": {
     "tools": [
+      "autumn_nodes",
       "jarvis_ping",
       "jarvis_system_info",
       "jarvis_system_status",

@@ -7,7 +7,7 @@ from jarvis_bridge.runner_client import build_signed_request,canonical_payload,c
 from urllib.error import URLError
 import socket
 from jarvis_bridge.server import BridgeServer
-from jarvis_bridge.node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15,HEALTH_TTL
+from jarvis_bridge.node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15,WINDOWS_HEALTH_TTL
 from unittest.mock import patch,ANY
 
 EXPECTED_ACTIONS = (
@@ -90,7 +90,7 @@ class BridgeTests(unittest.TestCase):
     self.assertTrue(z.probe_windows_once());first=z.registry.get("windows-main")
     self.assertEqual(first["capabilities"],WINDOWS_MAIN["capabilities"]);self.assertEqual(first["online"],"ONLINE")
     self.assertTrue(z.probe_windows_once());self.assertEqual(z.registry.get("windows-main")["online"],"ONLINE")
-   z.registry.upsert({**WINDOWS_MAIN,"last_seen":(z.registry._clock()-HEALTH_TTL-timedelta(seconds=1)).isoformat()})
+   z.registry.upsert({**WINDOWS_MAIN,"last_seen":(z.registry._clock()-WINDOWS_HEALTH_TTL-timedelta(seconds=1)).isoformat()})
    with patch("jarvis_bridge.server.runner_health",return_value=False):self.assertFalse(z.probe_windows_once())
    self.assertEqual(z.registry.get("windows-main")["online"],"OFFLINE")
    with patch("jarvis_bridge.server.runner_health",return_value=True):self.assertTrue(z.probe_windows_once())

@@ -14,6 +14,7 @@
 | Direct Worker | READY | Catalog-backed L1/L2；bounded stdout/stderr result 已生产验证 |
 | Codex Worker | READY | L3 exact authorization + Runner staging + CREATE/MODIFY-only Publish Gate |
 | Emergency Stop | READY | Runner + Pi/OpenClaw production E2E PASS |
+| Node observation | READY | `autumn_nodes` reads the live Pi Node Registry; it is read-only and capability is not authorization |
 
 ## 0.5 权限域（事实）
 
@@ -32,7 +33,20 @@
 ### 已废弃描述
 - 「Feishu sender policy 禁止 exec/node/python」——不再适用，作废。
 
-## 1. Windows Tools
+## 1. Node Observation
+
+### `autumn_nodes`
+Use this single read-only tool when the user asks which devices are available, a device's current presence, or its current declared capabilities.
+
+- `{"action":"list"}` lists the bounded live Registry view.
+- `{"action":"get","node_id":"windows-main"}` reads one Node.
+- `QUERY_FAILED` means the Registry is temporarily unavailable; do not turn it into an `OFFLINE` claim.
+- Phone `UNKNOWN` means no recent activity evidence, not offline.
+- Presence is observational. **CAPABILITY != AUTHORIZATION**: a declared `job.submit` capability does not approve a job.
+
+This tool never touches presence, registers a Node, executes a capability, wakes a device, or changes authorization.
+
+## 2. Windows Tools
 
 ### 1.1 结构化工具（自动可用，无需授权）
 
@@ -102,7 +116,7 @@ Phase 2B-5B 新增三个 worker 控制工具，Bridge 纯透传，Runner 是唯�
 ### `worker_resume`
 恢复 Runner：重新开放 Job 提交。只有用户明确要求（"恢复 Worker"、"解除暂停"、"resume"）时才调用。不得因新任务自动 resume。
 
-## 2. OpenClaw Native Capabilities
+## 3. OpenClaw Native Capabilities
 
 ### Cron / Reminder
 优先用于一次性提醒、周期提醒、定时检查和后台周期任务。不要为了普通提醒新写 Python Scheduler。
@@ -128,13 +142,15 @@ Phase 2B-5B 新增三个 worker 控制工具，Bridge 纯透传，Runner 是唯�
 - 临时文件行为；
 - 是否需要额外 recipient。
 
-## 3. Routing Examples
+## 4. Routing Examples
 
 “晚上 9 点提醒我交作业” → cron / reminder
 
 “查一下 Quartus 这个错误” → web / browser
 
 “电脑现在怎么样” → `jarvis_system_status`
+
+“有哪些设备可用” / “Windows 在线吗，能做什么” → `autumn_nodes`
 
 “找一下 D 盘 PA1” → `jarvis_search_files`
 
@@ -148,7 +164,7 @@ Phase 2B-5B 新增三个 worker 控制工具，Bridge 纯透传，Runner 是唯�
 
 “把 Windows 搜到的第一个文件发给我” → 当前仍需确认 Windows → 树莓派 的受控文件数据链路是否已经有原生方案。不要伪装成已支持。**（3B-3 后已更新：见下"Windows → Feishu 文件回传"）**
 
-### 3.1 Router Lite (Phase 2B_6)
+### 4.1 Router Lite (Phase 2B_6)
 
 完整决策树见 `AGENTS.md §16 Router Lite`。
 本页只列对应到工具层的入口：
@@ -165,7 +181,7 @@ Phase 2B-5B 新增三个 worker 控制工具，Bridge 纯透传，Runner 是唯�
 
 不在本页展开；详见 AGENTS.md §16.1–§16.5。
 
-## 4. Known Gaps / To Verify
+## 5. Known Gaps / To Verify
 
 ### Windows → Feishu 文件回传
 **READY**（2026-08-07，Phase 3B-3）
@@ -208,7 +224,7 @@ OpenClaw 已具备基础能力，但要做一次真实用户体验验收。
 
 OpenCode Worker 不在此能力中：它由批准的 scope change 从 V0.2 延后到 V0.3，当前不是 PASS，也不是 V0.2 blocker。
 
-## 5. Safety Reminder
+## 6. Safety Reminder
 
 文档中的规则不能代替真正安全边界。
 
