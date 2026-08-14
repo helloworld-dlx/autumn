@@ -14,6 +14,10 @@
 **PHASE3A:** PASS / CLOSED / FROZEN — active Nodes: `pi5-core`, `windows-main`, `xiaomi15`; Pi4, Xiaomi Home, earbuds, Camera/Eyes and future realtime voice remain deferred.
 **PHASE3B-0B1:** PASS / CLOSED — Companion Main conversation is stable at `agent:main:companion:main`; Voice runtime IDs no longer create Gateway Voice session identities.
 **PHASE3B-0B2:** BLOCKED — offline Companion shell, real health state and Voice recovery passed; Xiaomi 15 Tailscale handoff result is C (no app launch/connection), so silent/on-demand Connect needs separate recon before closure.
+**PHASE3B-0C1:** PASS / CLOSED — session hygiene manifest completed; Scope A was approved for official orphan cleanup, while legacy test-session deletion remains deferred by authority and non-blocking.
+**PHASE3B-0C2-SCOPE-A:** PASS / CLOSED — 417 unreferenced artifacts removed; OpenClaw reported 393,022,980 bytes reclaimed; physical JSONL decreased from 386 to 167.
+**PHASE3B-0C2-SCOPE-B:** DEFERRED / NON-BLOCKING — 8 clearly test-named Voice sessions remain pending `operator.admin`/`operator.pairing` authority; 20 UUID Voice sessions are KEEP.
+**PHASE3B-0C:** PASS / CLOSED — Companion session hygiene closure reconciled without changing Gateway authority or deleting user UUID sessions.
 
 ## Current Product Truth
 
