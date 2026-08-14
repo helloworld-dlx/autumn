@@ -77,4 +77,9 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertIn('self.path == "/sw.js"', source)
         self.assertIn('"sw.js"', source)
 
+    def test_afterglow_background_is_an_allowlisted_static_route(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn('"/assets/afterglow-home.webp"', source)
+        self.assertIn('"assets/afterglow-home.webp", "image/webp"', source)
+
 if __name__ == '__main__': unittest.main()

@@ -1,4 +1,4 @@
-const CACHE_NAME = "autumn-companion-shell-v1";
+const CACHE_NAME = "autumn-companion-shell-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -6,6 +6,7 @@ const APP_SHELL = [
   "/manifest.webmanifest",
   "/icons/autumn-192.png",
   "/icons/autumn-512.png",
+  "/assets/afterglow-home.webp",
 ];
 
 self.addEventListener("install", (event) => {

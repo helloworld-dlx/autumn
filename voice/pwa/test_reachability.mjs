@@ -6,7 +6,7 @@ const html = await readFile(new URL('./index.html', import.meta.url), 'utf8');
 const worker = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
 
 test('service worker caches only the static Companion shell', () => {
-  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"', '"/assets/afterglow-home.webp"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const privateRoute of ['/api/', '/health', '/audio/', 'IndexedDB', 'sync']) assert.doesNotMatch(worker, new RegExp(privateRoute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
@@ -18,10 +18,9 @@ test('connectivity is determined by same-origin health, not browser network stat
   assert.doesNotMatch(html, /navigator\.onLine/);
 });
 
-test('Connect uses a fixed user-gesture Tailscale handoff and bounded return probes', () => {
-  assert.match(html, /package=com\.tailscale\.ipn/);
-  assert.match(html, /connectButton\.onclick=openTailscale/);
-  assert.match(html, /for\(const delay of \[4000,10000\]\)/);
+test('Companion shell keeps health probes on foreground events without a Tailscale handoff control', () => {
+  assert.doesNotMatch(html, /id="connect"/);
+  assert.doesNotMatch(html, /connectButton\.onclick/);
   assert.match(html, /visibilitychange/);
   assert.match(html, /pageshow/);
   assert.match(html, /window\.addEventListener\('focus'/);
