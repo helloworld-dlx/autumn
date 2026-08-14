@@ -1,0 +1,16 @@
+{
+  "name": "@local/proactive-cron-completion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal OpenClaw cron delivery-success hook for Autumn Commitment Memory.",
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}

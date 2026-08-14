@@ -1,0 +1,19 @@
+[Unit]
+Description=Autumn Minimal Portable Voice Bridge
+After=network-online.target openclaw-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/xyzlh/.openclaw/workspace/voice-bridge
+EnvironmentFile=-/home/xyzlh/.config/autumn/voice-bridge.env
+Environment=VOICE_BRIDGE_HOST=127.0.0.1
+Environment=VOICE_BRIDGE_PORT=18791
+ExecStart=/usr/bin/python3 /home/xyzlh/.openclaw/workspace/voice-bridge/voice_bridge.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

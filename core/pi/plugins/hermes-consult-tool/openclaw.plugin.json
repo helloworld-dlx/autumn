@@ -1,0 +1,17 @@
+{
+  "id": "hermes-consult-tool",
+  "name": "Hermes Consult Tool",
+  "description": "Internal Autumn capability: frozen hermes_consult(question, context?) plus hermes_session(action, message?) with runtime-owned conversation isolation. Session is bounded (max 8 turns, 30 min idle), uses approved Hermes tools (memory, session_search, skills_list, skill_view), and does not persist native session state.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "contracts": {
+    "tools": ["hermes_consult", "hermes_session"]
+  }
+}

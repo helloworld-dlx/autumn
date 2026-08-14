@@ -1,0 +1,44 @@
+# Secrets and device-local configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.token
+**/config/*.json
+!**/config/*.example.json
+**/*credentials*
+**/*secrets*
+
+# Runtime and private state
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+logs/
+*.log
+state/
+work/
+transfers/
+upload/
+outbox/
+media/
+*.mp3
+*.wav
+*.sqlite
+*.sqlite-*
+*.jsonl
+
+# Generated and historical artifacts
+dist/
+!core/pi/plugins/**/dist/
+!core/pi/plugins/**/dist/index.js
+*.pre-*
+*.bak*
+*.orig
+*.zip
+*.pdf
+*.docx
+*.sha256
+*MANIFEST_SHA256*

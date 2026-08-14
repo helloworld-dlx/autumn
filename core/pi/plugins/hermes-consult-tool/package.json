@@ -1,0 +1,20 @@
+{
+  "name": "@local/hermes-consult-tool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw Autumn internal tool plugin exposing frozen hermes_consult(question, context?) and bounded ephemeral hermes_session(action, message?) contracts. Production uses the controlled Hermes Official API Server adapter; tests inject mocks.",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "dependencies": {
+    "typebox": "1.1.39"
+  }
+}

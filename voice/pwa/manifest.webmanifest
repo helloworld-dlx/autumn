@@ -1,0 +1,24 @@
+{
+  "id": "/",
+  "name": "Autumn",
+  "short_name": "Autumn",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#282535",
+  "theme_color": "#4c4565",
+  "icons": [
+    {
+      "src": "/icons/autumn-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/autumn-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

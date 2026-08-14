@@ -1,0 +1,14 @@
+{
+  "id": "proactive-cron-completion",
+  "name": "Proactive Cron Completion",
+  "description": "Finalizes a bound time Commitment only after an OpenClaw Cron announce is confirmed delivered.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

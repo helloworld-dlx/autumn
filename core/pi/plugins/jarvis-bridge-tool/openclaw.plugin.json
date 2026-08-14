@@ -1,0 +1,34 @@
+{
+  "id": "jarvis-bridge-tool",
+  "name": "Jarvis Bridge Tool",
+  "description": "Sixteen fixed tools that proxy to the local Jarvis Bridge at 127.0.0.1:27901. Seven legacy probes + two whitelisted program tools (Phase 3A-3) plus nine Phase 2B worker tools for the Windows Runner Job API (submit, status, cancel, result), authorization (request, approve) and worker control (status, emergency_stop, resume). Worker operations: archive.list, archive.create (backend=direct only) and Codex (backend=codex, requires authorization).",
+  "version": "0.3.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "contracts": {
+    "tools": [
+      "jarvis_ping",
+      "jarvis_system_info",
+      "jarvis_system_status",
+      "jarvis_list_directory",
+      "jarvis_search_files",
+      "jarvis_program_list",
+      "jarvis_program_run",
+      "worker_submit",
+      "worker_status",
+      "worker_cancel",
+      "worker_result",
+      "worker_authorization_request",
+      "worker_authorization_approve",
+      "worker_control_status",
+      "worker_emergency_stop",
+      "worker_resume"
+    ]
+  }
+}

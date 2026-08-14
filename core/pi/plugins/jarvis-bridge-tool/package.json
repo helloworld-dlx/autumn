@@ -1,0 +1,20 @@
+{
+  "name": "@local/jarvis-bridge-tool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw tool plugin exposing five fixed Bridge-backed tools for the Jarvis Phase 2C deployment.",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "dependencies": {
+    "typebox": "1.1.39"
+  }
+}

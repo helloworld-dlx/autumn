@@ -1,0 +1,1 @@
+{"listen_host":"127.0.0.1","listen_port":27901,"runner_base_url":"http://100.64.0.10:27891","runner_key_path":"~/.config/jarvis-bridge/runner_auth.key","bridge_token_path":"~/.config/jarvis-bridge/bridge_local.token","runner_key_id":"runner-local-v1","runner_target_device":"windows-runner","request_timeout_seconds":8,"maximum_request_body_bytes":65536}
