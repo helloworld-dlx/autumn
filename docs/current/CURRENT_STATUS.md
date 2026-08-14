@@ -13,6 +13,7 @@
 **PHASE3A-5:** PASS / CLOSED — `autumn_nodes` reads live Pi Registry only; Windows presence probe is 60s with 180s TTL.
 **PHASE3A:** PASS / CLOSED / FROZEN — active Nodes: `pi5-core`, `windows-main`, `xiaomi15`; Pi4, Xiaomi Home, earbuds, Camera/Eyes and future realtime voice remain deferred.
 **PHASE3B-0B1:** PASS / CLOSED — Companion Main conversation is stable at `agent:main:companion:main`; Voice runtime IDs no longer create Gateway Voice session identities.
+**PHASE3B-0B2:** BLOCKED — offline Companion shell, real health state and Voice recovery passed; Xiaomi 15 Tailscale handoff result is C (no app launch/connection), so silent/on-demand Connect needs separate recon before closure.
 
 ## Current Product Truth
 

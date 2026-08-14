@@ -72,4 +72,9 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertTrue(bridge.touch_phone_presence(lambda *_args, **_kwargs: Response()))
         self.assertFalse(bridge.touch_phone_presence(lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())))
 
+    def test_service_worker_is_a_static_route(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn('self.path == "/sw.js"', source)
+        self.assertIn('"sw.js"', source)
+
 if __name__ == '__main__': unittest.main()
