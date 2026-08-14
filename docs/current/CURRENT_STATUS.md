@@ -12,6 +12,7 @@
 **PHASE3A-4:** PASS / CLOSED — activity-based Xiaomi 15 presence registers `xiaomi15` as `RECENT`; no periodic phone heartbeat.
 **PHASE3A-5:** PASS / CLOSED — `autumn_nodes` reads live Pi Registry only; Windows presence probe is 60s with 180s TTL.
 **PHASE3A:** PASS / CLOSED / FROZEN — active Nodes: `pi5-core`, `windows-main`, `xiaomi15`; Pi4, Xiaomi Home, earbuds, Camera/Eyes and future realtime voice remain deferred.
+**PHASE3B-0B1:** PASS / CLOSED — Companion Main conversation is stable at `agent:main:companion:main`; Voice runtime IDs no longer create Gateway Voice session identities.
 
 ## Current Product Truth
 

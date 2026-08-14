@@ -1,6 +1,7 @@
 export class ContinuousVoiceSession {
-  constructor(sessionId, mode = 'continuous') {
-    this.sessionId = sessionId;
+  constructor(runtimeId, conversationId = 'main', mode = 'continuous') {
+    this.runtimeId = runtimeId;
+    this.conversationId = conversationId;
     this.mode = mode;
     this.running = false;
     this.state = 'OFF';

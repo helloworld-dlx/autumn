@@ -14,13 +14,13 @@ class VoiceBridgeTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError): bridge.process_turn(b"a", "a.webm", "audio/webm", "x", stt, lambda *_: called.append(True), lambda *_: Path("x"))
         self.assertEqual(called, [])
 
-    def test_direct_gateway_uses_session_and_returns_final_text(self):
+    def test_direct_gateway_uses_conversation_and_returns_final_text(self):
         class FakeGateway:
             def __init__(self): self.calls = []
             def turn(self, message, key): self.calls.append((message, key)); return '收到。'
         gateway = FakeGateway()
-        self.assertEqual(bridge.autumn_turn('你好', 'voice:same', gateway), '收到。')
-        self.assertEqual(gateway.calls, [('你好', 'voice:same')])
+        self.assertEqual(bridge.autumn_turn('你好', 'companion:main', gateway), '收到。')
+        self.assertEqual(gateway.calls, [('你好', 'companion:main')])
 
     def test_gateway_failure_is_explicit(self):
         class FailedGateway:
@@ -29,9 +29,30 @@ class VoiceBridgeTests(unittest.TestCase):
             bridge.autumn_turn('你好', 'voice:same', FailedGateway())
         self.assertEqual(caught.exception.code, 'GATEWAY_FAILED')
 
-    def test_session_key_reuses_id(self):
-        self.assertEqual(bridge.session_key('same'), 'voice:same')
-        self.assertEqual(bridge.session_key('same'), 'voice:same')
+    def test_conversation_key_is_stable_and_independent_of_runtime(self):
+        self.assertEqual(bridge.conversation_key('main'), 'companion:main')
+        self.assertEqual(bridge.conversation_key('main'), 'companion:main')
+        self.assertEqual(bridge.conversation_key('c_project_a'), 'companion:c_project_a')
+        self.assertNotEqual(bridge.conversation_key('main'), bridge.conversation_key('c_project_a'))
+        self.assertNotIn('voice:', bridge.conversation_key('main'))
+
+    def test_default_conversation_is_main_and_label_is_not_identity(self):
+        self.assertEqual(bridge.conversation_key(None), 'companion:main')
+        self.assertEqual(bridge.conversation_key('c_opaque_id'), 'companion:c_opaque_id')
+
+    def test_process_turn_uses_main_conversation_not_runtime_identity(self):
+        captured = []
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / 'reply.mp3'; output.write_bytes(b'a')
+            result = bridge.process_turn(
+                b'a', 'a.webm', 'audio/webm', 'main',
+                lambda *_: '你好',
+                lambda _text, key: captured.append(key) or '收到。',
+                lambda *_: output,
+            )
+        self.assertEqual(captured, ['companion:main'])
+        self.assertEqual(result['conversationKey'], 'companion:main')
+        self.assertNotIn('sessionKey', result)
 
     def test_tts_failure_is_explicit(self):
         with self.assertRaisesRegex(bridge.BridgeError, 'synthesis'):

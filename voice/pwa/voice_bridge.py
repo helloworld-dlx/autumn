@@ -48,9 +48,13 @@ def touch_phone_presence(opener=None) -> bool:
         return False
 
 
-def session_key(session_id: str | None) -> str:
-    safe = re.sub(r"[^A-Za-z0-9_-]", "", session_id or "")[:80]
-    return f"voice:{safe or uuid.uuid4().hex}"
+MAIN_CONVERSATION_ID = "main"
+
+
+def conversation_key(conversation_id: str | None) -> str:
+    """Map a stable Companion conversation identity to its Gateway key."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", conversation_id or "")[:80]
+    return f"companion:{safe or MAIN_CONVERSATION_ID}"
 
 
 class GatewayTurnClient:
@@ -162,7 +166,7 @@ def cleanup_audio() -> None:
             AUDIOS.pop(token, None)
 
 
-def process_turn(audio: bytes, filename: str, mime: str, requested_session: str | None,
+def process_turn(audio: bytes, filename: str, mime: str, requested_conversation: str | None,
                  stt=siliconflow_transcribe, autumn=autumn_turn, tts=minimax_tts) -> dict[str, object]:
     if not audio:
         raise BridgeError("AUDIO_REQUIRED", "Upload one audio utterance", 400)
@@ -171,7 +175,7 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_session: str 
     started = time.monotonic()
     transcript = stt(audio, filename, mime)  # Must succeed before Autumn is invoked.
     stt_ms = round((time.monotonic() - started) * 1000)
-    key = session_key(requested_session)
+    key = conversation_key(requested_conversation)
     reply = autumn(transcript, key)
     autumn_ms = round((time.monotonic() - started) * 1000) - stt_ms
     path = tts(reply)
@@ -179,7 +183,7 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_session: str 
     token = uuid.uuid4().hex
     AUDIOS[token] = (path, time.monotonic())
     cleanup_audio()
-    return {"sessionKey": key, "transcript": transcript, "reply": reply, "audioUrl": f"/api/audio/{token}",
+    return {"conversationKey": key, "transcript": transcript, "reply": reply, "audioUrl": f"/api/audio/{token}",
             "latencyMs": {"stt": stt_ms, "autumn": autumn_ms, "tts": total_ms - stt_ms - autumn_ms, "total": total_ms}}
 
 
@@ -207,8 +211,8 @@ def parse_multipart(content_type: str, body: bytes) -> tuple[bytes, str, str, st
     disposition = headers.get("content-disposition", "")
     file_name = (re.search(r'filename="([^"]*)"', disposition) or ["audio.webm"])[1]
     mime = headers.get("content-type", mimetypes.guess_type(file_name)[0] or "application/octet-stream")
-    session = fields.get("sessionId", ({}, b""))[1].decode("utf-8", "ignore") or None
-    return audio, file_name, mime, session
+    conversation = fields.get("conversationId", ({}, b""))[1].decode("utf-8", "ignore") or None
+    return audio, file_name, mime, conversation
 
 
 class Handler(BaseHTTPRequestHandler):
