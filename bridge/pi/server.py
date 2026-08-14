@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 from .auth import load_secret,token_matches
 from .config import ACTIONS,validate_config
 from .runner_client import build_signed_request,call_runner,submit_job,job_status,cancel_job,job_result,authorization_request,authorization_approve,worker_control_status,worker_pause,worker_resume,runner_health
-from .node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN
+from .node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15
 PROBE_INTERVAL_SECONDS=30
 class BridgeServer(ThreadingHTTPServer):
  daemon_threads=True;request_queue_size=8
@@ -50,6 +50,11 @@ class Handler(BaseHTTPRequestHandler):
  def do_POST(self):
   p=self._parse_request_path()
   if p=="/v1/health":self.error(405,"METHOD_NOT_ALLOWED");return
+  if p=="/v1/internal/nodes/xiaomi15/touch":
+   if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length") not in (None,"0"):self.error(400,"BRIDGE_REQUEST_INVALID");return
+   if self.server.registry.get("xiaomi15") is None:self.server.registry.upsert({**XIAOMI15,"last_seen":None})
+   else:self.server.registry.touch("xiaomi15")
+   self.send(200,{"status":"ok"});return
   # Job routes — separate namespace, no ACTIONS check
   if p in ("/v1/jobs/submit","/v1/jobs/status","/v1/jobs/cancel","/v1/jobs/result"):
    self._do_job(p);return

@@ -7,7 +7,7 @@ from jarvis_bridge.runner_client import build_signed_request,canonical_payload,c
 from urllib.error import URLError
 import socket
 from jarvis_bridge.server import BridgeServer
-from jarvis_bridge.node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,HEALTH_TTL
+from jarvis_bridge.node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15,HEALTH_TTL
 from unittest.mock import patch,ANY
 
 EXPECTED_ACTIONS = (
@@ -96,6 +96,16 @@ class BridgeTests(unittest.TestCase):
    with patch("jarvis_bridge.server.runner_health",return_value=True):self.assertTrue(z.probe_windows_once())
    self.assertEqual(z.registry.get("windows-main")["online"],"ONLINE")
   finally:z.server_close()
+ def test_internal_phone_touch_is_fixed_and_not_a_generic_registration_api(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32);z=BridgeServer(replace(self.c,listen_port=0),start_probe=False);thread=threading.Thread(target=z.serve_forever);thread.start()
+  def call(path,body=None):
+   x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST",path,body);r=x.getresponse();v=json.loads(r.read());x.close();return r.status,v
+  try:
+   status,_=call("/v1/internal/nodes/xiaomi15/touch");self.assertEqual(status,200);node=z.registry.get("xiaomi15")
+   self.assertEqual(node["capabilities"],XIAOMI15["capabilities"]);self.assertNotIn("camera.capture",node["capabilities"]);self.assertEqual(node["online"],"RECENT")
+   status,error=call("/v1/internal/nodes/other/touch");self.assertEqual(status,404);self.assertEqual(error["error_code"],"NOT_FOUND")
+   status,error=call("/v1/internal/nodes/xiaomi15/touch",b"{}");self.assertEqual(status,400);self.assertEqual(error["error_code"],"BRIDGE_REQUEST_INVALID")
+  finally:z.shutdown();z.server_close();thread.join()
  def test_node_registry_valid_pi5_descriptor_get_list_touch_and_presence(self):
   from datetime import datetime,timezone,timedelta
   now=datetime(2026,8,14,tzinfo=timezone.utc);registry=NodeRegistry(clock=lambda:now)

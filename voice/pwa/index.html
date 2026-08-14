@@ -56,10 +56,11 @@ async function sendTurn(){try{const audio=new Blob(chunks,{type:recorder.mimeTyp
 function fail(message){session?.stop();player?.pause();player=null;clearCapture();show('错误',message);render()}
 function selectMode(mode){selectedMode=mode;modeSheet.hidden=true;render()}
 modeChip.onclick=()=>{if(!modeChip.disabled){modeSheet.hidden=!modeSheet.hidden;render()}}
-function startVoice(mode){session=new ContinuousVoiceSession(crypto.randomUUID(),mode);session.start();render();player=new Audio();player.volume=0;player.src=SILENT_WAV;player.play().then(()=>{player.pause();player.currentTime=0;player.volume=1}).catch(()=>{});beginListening()}
+function touchPresence(){fetch('/api/presence/touch',{method:'POST',keepalive:true}).catch(()=>{})}
+function startVoice(mode){touchPresence();session=new ContinuousVoiceSession(crypto.randomUUID(),mode);session.start();render();player=new Audio();player.volume=0;player.src=SILENT_WAV;player.play().then(()=>{player.pause();player.currentTime=0;player.volume=1}).catch(()=>{});beginListening()}
 quickButton.onclick=()=>selectMode('quick');
 conversationButton.onclick=()=>selectMode('continuous');
 startButton.onclick=()=>{if(session?.running)stopButton.click();else startVoice(selectedMode)};
 stopButton.onclick=()=>{session.stop();player?.pause();player=null;stopCapture(false);show('会话','已停止。');render()};
-render();
+render();touchPresence();document.addEventListener('visibilitychange',()=>{if(!document.hidden)touchPresence()});
 </script>

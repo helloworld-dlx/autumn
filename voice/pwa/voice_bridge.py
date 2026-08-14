@@ -14,7 +14,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, ProxyHandler, urlopen
 
 HOST = os.environ.get("VOICE_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VOICE_BRIDGE_PORT", "18791"))
@@ -24,6 +24,7 @@ GATEWAY_HELPER = ROOT / "gateway_turn.mjs"
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
 AUDIO_TTL_SECONDS = 600
 AUDIOS: dict[str, tuple[Path, float]] = {}
+PHONE_TOUCH_URL = "http://127.0.0.1:27901/v1/internal/nodes/xiaomi15/touch"
 
 
 class BridgeError(Exception):
@@ -35,6 +36,16 @@ class BridgeError(Exception):
 def assert_loopback(host: str) -> None:
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("VOICE_BRIDGE_HOST must be loopback")
+
+
+def touch_phone_presence(opener=None) -> bool:
+    request = Request(PHONE_TOUCH_URL, data=b"", method="POST")
+    try:
+        open_request = opener or build_opener(ProxyHandler({})).open
+        with open_request(request, timeout=1) as response:
+            return response.status == 200
+    except (OSError, HTTPError, URLError, TimeoutError):
+        return False
 
 
 def session_key(session_id: str | None) -> str:
@@ -231,12 +242,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:
+        if self.path == "/api/presence/touch":
+            touch_phone_presence()
+            self.send_json(200, {"ok": True})
+            return
         if self.path != "/api/turn": self.send_error(404); return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_AUDIO_BYTES + 65536: raise BridgeError("AUDIO_TOO_LARGE", "Audio exceeds 20 MiB", 413)
             audio, name, mime, requested = parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(length))
-            self.send_json(200, process_turn(audio, name, mime, requested))
+            result = process_turn(audio, name, mime, requested)
+            touch_phone_presence()  # Non-critical telemetry; failure must not affect the turn.
+            self.send_json(200, result)
         except BridgeError as exc:
             self.send_json(exc.status, {"error": exc.code, "message": exc.message})
         except Exception:

@@ -18,6 +18,14 @@ WINDOWS_MAIN = {
     "capabilities": ["system.status", "file.search", "file.return", "job.submit", "job.status", "job.cancel", "codex.submit"],
     "metadata": {},
 }
+XIAOMI15 = {
+    "protocol_version": PROTOCOL_VERSION,
+    "node_id": "xiaomi15",
+    "node_type": "phone",
+    "node_version": "voice-pwa-v0.2",
+    "capabilities": ["voice.listen", "voice.speak", "open_url", "clipboard.set"],
+    "metadata": {},
+}
 HEALTH_TTL = timedelta(seconds=90)
 PHONE_RECENT_TTL = timedelta(minutes=10)
 MAX_PUBLIC_NODES = 16

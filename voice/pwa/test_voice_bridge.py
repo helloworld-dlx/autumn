@@ -43,4 +43,12 @@ class VoiceBridgeTests(unittest.TestCase):
             result = bridge.process_turn(b"a", "a.webm", "audio/webm", "x", lambda *_: '你好', lambda *_: '回复', lambda *_: p)
         self.assertNotIn('API_KEY', repr(result)); self.assertNotIn('SILICONFLOW', repr(result)); self.assertNotIn('XIAOMI', repr(result))
 
+    def test_phone_presence_touch_is_best_effort(self):
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+        self.assertTrue(bridge.touch_phone_presence(lambda *_args, **_kwargs: Response()))
+        self.assertFalse(bridge.touch_phone_presence(lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())))
+
 if __name__ == '__main__': unittest.main()
