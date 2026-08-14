@@ -17,10 +17,10 @@ class VoiceBridgeTests(unittest.TestCase):
     def test_direct_gateway_uses_conversation_and_returns_final_text(self):
         class FakeGateway:
             def __init__(self): self.calls = []
-            def turn(self, message, key): self.calls.append((message, key)); return '收到。'
+            def turn(self, message, key, source): self.calls.append((message, key, source)); return '收到。'
         gateway = FakeGateway()
         self.assertEqual(bridge.autumn_turn('你好', 'companion:main', gateway), '收到。')
-        self.assertEqual(gateway.calls, [('你好', 'companion:main')])
+        self.assertEqual(gateway.calls, [('你好', 'companion:main', 'voice')])
 
     def test_gateway_failure_is_explicit(self):
         class FailedGateway:
@@ -81,5 +81,34 @@ class VoiceBridgeTests(unittest.TestCase):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
         self.assertIn('"/assets/afterglow-home.webp"', source)
         self.assertIn('"assets/afterglow-home.webp", "image/webp"', source)
+
+    def test_main_chat_uses_stable_key_without_stt_or_tts(self):
+        calls = []
+        result = bridge.process_chat(
+            '你好', 'main',
+            lambda message, key, source: calls.append((message, key, source)) or '收到。',
+        )
+        self.assertEqual(calls, [('你好', 'companion:main', 'chat')])
+        self.assertEqual(result['conversationKey'], 'companion:main')
+        self.assertEqual(result['reply'], '收到。')
+        self.assertIsInstance(result['latencyMs'], int)
+
+    def test_chat_rejects_empty_invalid_json_and_oversize(self):
+        with self.assertRaisesRegex(bridge.BridgeError, 'required') as caught:
+            bridge.process_chat('   ', 'main')
+        self.assertEqual(caught.exception.code, 'MESSAGE_REQUIRED')
+        with self.assertRaisesRegex(bridge.BridgeError, 'Invalid JSON') as caught:
+            bridge.parse_chat(b'{')
+        self.assertEqual(caught.exception.code, 'INVALID_JSON')
+        with self.assertRaisesRegex(bridge.BridgeError, '16 KiB') as caught:
+            bridge.process_chat('x' * (bridge.MAX_CHAT_BYTES + 1), 'main')
+        self.assertEqual(caught.exception.code, 'MESSAGE_TOO_LARGE')
+
+    def test_chat_gateway_failure_is_safe(self):
+        class FailedGateway:
+            def turn(self, *_): raise RuntimeError('disconnected')
+        with self.assertRaisesRegex(bridge.BridgeError, 'Gateway') as caught:
+            bridge.process_chat('你好', 'main', lambda message, key, source: bridge.autumn_turn(message, key, FailedGateway(), source))
+        self.assertEqual(caught.exception.code, 'GATEWAY_FAILED')
 
 if __name__ == '__main__': unittest.main()

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent
 MEDIA = ROOT / "media"
 GATEWAY_HELPER = ROOT / "gateway_turn.mjs"
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
+MAX_CHAT_BYTES = 16 * 1024
 AUDIO_TTL_SECONDS = 600
 AUDIOS: dict[str, tuple[Path, float]] = {}
 PHONE_TOUCH_URL = "http://127.0.0.1:27901/v1/internal/nodes/xiaomi15/touch"
@@ -76,12 +77,12 @@ class GatewayTurnClient:
         with self.lock:
             self._start()
 
-    def turn(self, transcript: str, voice_key: str) -> str:
+    def turn(self, message: str, voice_key: str, source: str = "voice") -> str:
         with self.lock:
             process = self._start()
             if process.stdin is None or process.stdout is None:
                 raise RuntimeError("Gateway helper pipes unavailable")
-            process.stdin.write(json.dumps({"message": transcript, "sessionKey": voice_key}, ensure_ascii=False) + "\n")
+            process.stdin.write(json.dumps({"message": message, "sessionKey": voice_key, "source": source}, ensure_ascii=False) + "\n")
             process.stdin.flush()
             line = process.stdout.readline()
             if not line:
@@ -96,9 +97,9 @@ class GatewayTurnClient:
 GATEWAY = GatewayTurnClient()
 
 
-def autumn_turn(transcript: str, voice_key: str, gateway: GatewayTurnClient = GATEWAY) -> str:
+def autumn_turn(transcript: str, voice_key: str, gateway: GatewayTurnClient = GATEWAY, source: str = "voice") -> str:
     try:
-        return gateway.turn(transcript, voice_key)
+        return gateway.turn(transcript, voice_key, source)
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         raise BridgeError("GATEWAY_FAILED", "Autumn Gateway turn failed", 502) from exc
 
@@ -187,6 +188,27 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_conversation:
             "latencyMs": {"stt": stt_ms, "autumn": autumn_ms, "tts": total_ms - stt_ms - autumn_ms, "total": total_ms}}
 
 
+def process_chat(message: object, requested_conversation: str | None, autumn=autumn_turn) -> dict[str, object]:
+    if not isinstance(message, str) or not message.strip():
+        raise BridgeError("MESSAGE_REQUIRED", "Message is required", 400)
+    if len(message.encode("utf-8")) > MAX_CHAT_BYTES:
+        raise BridgeError("MESSAGE_TOO_LARGE", "Message exceeds 16 KiB", 413)
+    started = time.monotonic()
+    key = conversation_key(requested_conversation)
+    reply = autumn(message.strip(), key, source="chat")
+    return {"conversationKey": key, "reply": reply, "latencyMs": round((time.monotonic() - started) * 1000)}
+
+
+def parse_chat(body: bytes) -> tuple[object, str | None]:
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BridgeError("INVALID_JSON", "Invalid JSON", 400) from exc
+    if not isinstance(payload, dict):
+        raise BridgeError("INVALID_JSON", "JSON object required", 400)
+    return payload.get("message"), payload.get("conversationId")
+
+
 def parse_multipart(content_type: str, body: bytes) -> tuple[bytes, str, str, str | None]:
     match = re.search(r"boundary=([^;]+)", content_type)
     if not match:
@@ -252,6 +274,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/presence/touch":
             touch_phone_presence()
             self.send_json(200, {"ok": True})
+            return
+        if self.path == "/api/chat":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_CHAT_BYTES:
+                    raise BridgeError("MESSAGE_TOO_LARGE", "Message exceeds 16 KiB", 413)
+                if "application/json" not in self.headers.get("Content-Type", "").lower():
+                    raise BridgeError("INVALID_JSON", "JSON body required", 400)
+                message, requested = parse_chat(self.rfile.read(length))
+                result = process_chat(message, requested)
+                touch_phone_presence()  # Non-critical telemetry; failure must not affect chat.
+                self.send_json(200, result)
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+            except Exception:
+                self.send_json(500, {"error": "INTERNAL_ERROR", "message": "Chat failed"})
             return
         if self.path != "/api/turn": self.send_error(404); return
         try:

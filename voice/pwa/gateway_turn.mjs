@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { n as GatewayClient } from "/home/xyzlh/openclaw_workspace/node_modules/openclaw/dist/client-BfgBP91A.js";
 
 const pending = new Map();
-const fastModeSessions = new Set();
 let readyResolve;
 let readyReject;
 const ready = new Promise((resolve, reject) => {
@@ -65,7 +64,7 @@ function handleEvent(event, payload) {
   }
 }
 
-async function sendAndWait(sessionKey, message) {
+async function sendAndWait(sessionKey, message, fastMode) {
   const runId = randomUUID();
   return await new Promise((resolve) => {
     const timer = setTimeout(
@@ -77,6 +76,7 @@ async function sendAndWait(sessionKey, message) {
       sessionKey,
       agentId: "main",
       message,
+      fastMode,
       timeoutMs: 120_000,
       idempotencyKey: runId,
     }).catch(() => finish(runId, { ok: false, error: "GATEWAY_REQUEST_FAILED" }));
@@ -94,20 +94,12 @@ for await (const line of lines) {
   let request;
   try {
     request = JSON.parse(line);
-    if (typeof request.message !== "string" || typeof request.sessionKey !== "string") {
+    if (typeof request.message !== "string" || typeof request.sessionKey !== "string" || !["chat", "voice"].includes(request.source)) {
       throw new Error("INVALID_REQUEST");
     }
     const startedAt = Date.now();
     const canonicalSessionKey = `agent:main:${request.sessionKey}`;
-    if (!fastModeSessions.has(canonicalSessionKey)) {
-      const modeResult = await sendAndWait(canonicalSessionKey, "/fast on");
-      if (!modeResult.ok) {
-        process.stdout.write(`${JSON.stringify(modeResult)}\n`);
-        continue;
-      }
-      fastModeSessions.add(canonicalSessionKey);
-    }
-    const result = await sendAndWait(canonicalSessionKey, request.message);
+    const result = await sendAndWait(canonicalSessionKey, request.message, request.source === "voice");
     process.stdout.write(`${JSON.stringify({ ...result, latencyMs: Date.now() - startedAt })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({
