@@ -77,6 +77,8 @@ Suggested initial TTLs for a later implementation: Pi/Windows 90 seconds after a
 
 The Pi Bridge remains loopback on `127.0.0.1:27901`; Voice Bridge remains loopback on `127.0.0.1:18791`. No public port, MQTT, gRPC or new message bus is part of V1.
 
+Phase 3A-2 adds read-only loopback Pi Bridge queries: `GET /v1/nodes` and `GET /v1/nodes/{node_id}`. They expose only bounded safe descriptors; registration remains internal.
+
 ## 9. Phase 3A implementation boundary
 
 - **3A-2 — Pi Node Registry Core:** store and expose this descriptor shape only.

@@ -6,6 +6,9 @@
 **PHASE2C:** PASS / CLOSED / FROZEN  
 **READY_FOR_AUTUMN_V0_3:** YES
 
+**PHASE3A-1:** PASS / CLOSED
+**PHASE3A-2:** PASS / CLOSED — Pi in-memory Node Registry Core; loopback `GET /v1/nodes` and `GET /v1/nodes/pi5-core`; Windows/Xiaomi adapters remain deferred.
+
 ## Current Product Truth
 
 用户正常只面对 Autumn。Router Lite 仅使用现有 context/tool rules，不存在 router service、classifier 或 classifier JSON。决策顺序为 Emergency Stop → explicit Hermes → self-answer → Direct Worker → Codex Worker。

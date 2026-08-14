@@ -4,9 +4,10 @@ from urllib.parse import urlsplit
 from .auth import load_secret,token_matches
 from .config import ACTIONS,validate_config
 from .runner_client import build_signed_request,call_runner,submit_job,job_status,cancel_job,job_result,authorization_request,authorization_approve,worker_control_status,worker_pause,worker_resume
+from .node_registry import NodeRegistry,PI5_CORE
 class BridgeServer(ThreadingHTTPServer):
  daemon_threads=True;request_queue_size=8
- def __init__(self,c):self.config=c;super().__init__((c.listen_host,c.listen_port),Handler)
+ def __init__(self,c):self.config=c;self.registry=NodeRegistry();self.registry.upsert({**PI5_CORE,"last_seen":None});super().__init__((c.listen_host,c.listen_port),Handler)
  def get_request(self):x,a=super().get_request();x.settimeout(15);return x,a
 class Handler(BaseHTTPRequestHandler):
  protocol_version="HTTP/1.1";server_version="jarvis-bridge";sys_version=""
@@ -21,6 +22,14 @@ class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   p=self._parse_request_path()
   if p=="/v1/health":self.send(200,{"status":"ok","bridge":"jarvis-bridge","protocol_version":"1.0"})
+  elif p=="/v1/nodes":self.send(200,{"nodes":self.server.registry.list()})
+  elif p and p.startswith("/v1/nodes/"):
+   node_id=p.removeprefix("/v1/nodes/")
+   if not node_id or "/" in node_id:self.error(404,"NOT_FOUND")
+   else:
+    node=self.server.registry.get(node_id)
+    if node is None:self.error(404,"NOT_FOUND")
+    else:self.send(200,node)
   elif p=="/v1/execute":self.error(405,"METHOD_NOT_ALLOWED")
   elif p:self.error(404,"NOT_FOUND")
  def do_POST(self):

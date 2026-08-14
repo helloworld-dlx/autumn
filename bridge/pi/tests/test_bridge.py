@@ -7,6 +7,7 @@ from jarvis_bridge.runner_client import build_signed_request,canonical_payload,c
 from urllib.error import URLError
 import socket
 from jarvis_bridge.server import BridgeServer
+from jarvis_bridge.node_registry import NodeRegistry,PI5_CORE
 from unittest.mock import patch,ANY
 
 EXPECTED_ACTIONS = (
@@ -80,6 +81,29 @@ class BridgeTests(unittest.TestCase):
     self.assertEqual(call("POST","/v1/execute",b'{"action":"system.ping","arguments":{}}')[0],401);runner.assert_not_called()
     runner.return_value=(200,{"request_id":"r","status":"success","output":{"ok":True},"error_code":None,"error_message":None})
     self.assertEqual(call("POST","/v1/execute",b'{"action":"system.ping","arguments":{}}',"t"*32)[0],200);runner.assert_called_once()
+  finally:z.shutdown();z.server_close();thread.join()
+ def test_node_registry_valid_pi5_descriptor_get_list_touch_and_presence(self):
+  from datetime import datetime,timezone,timedelta
+  now=datetime(2026,8,14,tzinfo=timezone.utc);registry=NodeRegistry(clock=lambda:now)
+  node=registry.upsert({**PI5_CORE,"last_seen":None})
+  self.assertEqual(node["node_id"],"pi5-core");self.assertEqual(node["protocol_version"],"1");self.assertEqual(node["online"],"ONLINE")
+  self.assertEqual(registry.list(),[node]);self.assertEqual(registry.touch("pi5-core")["last_seen"],"2026-08-14T00:00:00Z")
+  self.assertEqual(registry.derive_presence("core",now-timedelta(seconds=91)),"OFFLINE")
+  self.assertEqual(registry.derive_presence("phone",now-timedelta(seconds=91)),"RECENT")
+  self.assertEqual(registry.derive_presence("phone",now-timedelta(minutes=11)),"UNKNOWN")
+ def test_node_registry_rejects_unknown_and_private_fields(self):
+  registry=NodeRegistry()
+  with self.assertRaises(ValueError):registry.upsert({**PI5_CORE,"last_seen":None,"token":"forbidden"})
+  with self.assertRaises(ValueError):registry.upsert({**PI5_CORE,"last_seen":None,"metadata":{"conversation":"private"}})
+  self.assertIsNone(registry.get("missing"))
+ def test_node_endpoints_are_safe_and_unknown_is_404(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32);z=BridgeServer(replace(self.c,listen_port=0));thread=threading.Thread(target=z.serve_forever);thread.start()
+  def call(path):
+   x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("GET",path);r=x.getresponse();v=json.loads(r.read());x.close();return r.status,v
+  try:
+   status,nodes=call("/v1/nodes");self.assertEqual(status,200);self.assertEqual(nodes["nodes"][0]["node_id"],"pi5-core");self.assertNotIn("token",json.dumps(nodes))
+   status,node=call("/v1/nodes/pi5-core");self.assertEqual(status,200);self.assertEqual(node["capabilities"],PI5_CORE["capabilities"])
+   status,error=call("/v1/nodes/missing");self.assertEqual(status,404);self.assertEqual(error["error_code"],"NOT_FOUND")
   finally:z.shutdown();z.server_close();thread.join()
  def test_05_06_bridge_http_accepts_program_actions(self):
   # 5) Bridge HTTP 接受 program.list
