@@ -83,6 +83,45 @@ async function sendAndWait(sessionKey, message, fastMode) {
   });
 }
 
+async function loadHistory(sessionKey) {
+  const result = await client.request("chat.history", {
+    sessionKey,
+    agentId: "main",
+    limit: 40,
+    maxChars: 12_000,
+  });
+  const messages = Array.isArray(result?.messages) ? result.messages : [];
+  return messages.flatMap((message) => {
+    if (!message || !["user", "assistant"].includes(message.role)) return [];
+    const text = visibleText(message);
+    return text ? [{ role: message.role, text }] : [];
+  });
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+async function loadCompanionSessions() {
+  const result = await client.request("sessions.list", { limit: 100 });
+  const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+  const prefix = "agent:main:companion:";
+  return sessions.flatMap((session) => {
+    if (!session || typeof session !== "object") return [];
+    const key = typeof session.key === "string" ? session.key : "";
+    if (!key.startsWith(prefix)) return [];
+    const id = key.slice(prefix.length);
+    if (!id) return [];
+    const label = firstString(session.label, session.title, session.displayName, session.derivedTitle);
+    const preview = firstString(session.preview).slice(0, 160);
+    const updatedAt = firstString(session.updatedAt, session.lastActivityAt, session.createdAt);
+    return [{ id, key, label, preview, updatedAt }];
+  });
+}
+
 client.start();
 await Promise.race([
   ready,
@@ -94,9 +133,20 @@ for await (const line of lines) {
   let request;
   try {
     request = JSON.parse(line);
-    if (typeof request.message !== "string" || typeof request.sessionKey !== "string" || !["chat", "voice"].includes(request.source)) {
+    if (typeof request.sessionKey !== "string") {
       throw new Error("INVALID_REQUEST");
     }
+    if (request.action === "history") {
+      const messages = await loadHistory(`agent:main:${request.sessionKey}`);
+      process.stdout.write(`${JSON.stringify({ ok: true, messages })}\n`);
+      continue;
+    }
+    if (request.action === "sessions") {
+      const sessions = await loadCompanionSessions();
+      process.stdout.write(`${JSON.stringify({ ok: true, sessions })}\n`);
+      continue;
+    }
+    if (typeof request.message !== "string" || !["chat", "voice"].includes(request.source)) throw new Error("INVALID_REQUEST");
     const startedAt = Date.now();
     const canonicalSessionKey = `agent:main:${request.sessionKey}`;
     const result = await sendAndWait(canonicalSessionKey, request.message, request.source === "voice");

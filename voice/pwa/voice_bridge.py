@@ -23,6 +23,7 @@ MEDIA = ROOT / "media"
 GATEWAY_HELPER = ROOT / "gateway_turn.mjs"
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
 MAX_CHAT_BYTES = 16 * 1024
+MAX_HISTORY_MESSAGES = 40
 AUDIO_TTL_SECONDS = 600
 AUDIOS: dict[str, tuple[Path, float]] = {}
 PHONE_TOUCH_URL = "http://127.0.0.1:27901/v1/internal/nodes/xiaomi15/touch"
@@ -92,6 +93,40 @@ class GatewayTurnClient:
         if not result.get("ok") or not isinstance(result.get("text"), str) or not result["text"].strip():
             raise RuntimeError(str(result.get("error") or "Gateway returned no reply"))
         return result["text"].strip()
+
+    def history(self, voice_key: str) -> list[dict[str, str]]:
+        with self.lock:
+            process = self._start()
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("Gateway helper pipes unavailable")
+            process.stdin.write(json.dumps({"action": "history", "sessionKey": voice_key}) + "\n")
+            process.stdin.flush()
+            line = process.stdout.readline()
+            if not line:
+                self.process = None
+                raise RuntimeError("Gateway helper stopped")
+        result = json.loads(line)
+        messages = result.get("messages")
+        if not result.get("ok") or not isinstance(messages, list):
+            raise RuntimeError(str(result.get("error") or "Gateway history unavailable"))
+        return messages
+
+    def sessions(self) -> list[dict[str, object]]:
+        with self.lock:
+            process = self._start()
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("Gateway helper pipes unavailable")
+            process.stdin.write(json.dumps({"action": "sessions", "sessionKey": conversation_key(MAIN_CONVERSATION_ID)}) + "\n")
+            process.stdin.flush()
+            line = process.stdout.readline()
+            if not line:
+                self.process = None
+                raise RuntimeError("Gateway helper stopped")
+        result = json.loads(line)
+        sessions = result.get("sessions")
+        if not result.get("ok") or not isinstance(sessions, list):
+            raise RuntimeError(str(result.get("error") or "Gateway sessions unavailable"))
+        return sessions
 
 
 GATEWAY = GatewayTurnClient()
@@ -199,6 +234,67 @@ def process_chat(message: object, requested_conversation: str | None, autumn=aut
     return {"conversationKey": key, "reply": reply, "latencyMs": round((time.monotonic() - started) * 1000)}
 
 
+def process_history(conversation_id: str | None, history=GATEWAY.history) -> dict[str, object]:
+    key = conversation_key(conversation_id)
+    try:
+        raw_messages = history(key)
+    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+        raise BridgeError("HISTORY_UNAVAILABLE", "Conversation history is unavailable", 502) from exc
+    messages = [
+        {"role": message["role"], "text": message["text"]}
+        for message in raw_messages[:MAX_HISTORY_MESSAGES]
+        if isinstance(message, dict)
+        and message.get("role") in {"user", "assistant"}
+        and isinstance(message.get("text"), str)
+        and message["text"].strip()
+    ]
+    return {"conversationKey": key, "messages": messages}
+
+
+def process_main_history(history=GATEWAY.history) -> dict[str, object]:
+    return process_history(MAIN_CONVERSATION_ID, history)
+
+
+def _session_title(session: dict[str, object], conversation_id: str) -> str:
+    if conversation_id == MAIN_CONVERSATION_ID:
+        return "Main"
+    for field in ("label", "preview"):
+        value = session.get(field)
+        if isinstance(value, str) and value.strip():
+            text = value.strip().splitlines()[0]
+            return text[:42] + ("…" if len(text) > 42 else "")
+    return "新对话"
+
+
+def process_conversations(sessions=GATEWAY.sessions) -> dict[str, object]:
+    try:
+        raw_sessions = sessions()
+    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+        raise BridgeError("CONVERSATIONS_UNAVAILABLE", "Conversation list is unavailable", 502) from exc
+    items: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for session in raw_sessions:
+        if not isinstance(session, dict):
+            continue
+        conversation_id = session.get("id")
+        if not isinstance(conversation_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", conversation_id):
+            continue
+        if conversation_id in seen:
+            continue
+        seen.add(conversation_id)
+        items.append({
+            "id": conversation_id,
+            "title": _session_title(session, conversation_id),
+            "preview": session.get("preview") if isinstance(session.get("preview"), str) else "",
+            "updatedAt": session.get("updatedAt") if isinstance(session.get("updatedAt"), str) else "",
+        })
+    if MAIN_CONVERSATION_ID not in seen:
+        items.insert(0, {"id": MAIN_CONVERSATION_ID, "title": "Main", "preview": "", "updatedAt": ""})
+    else:
+        items.sort(key=lambda item: item["id"] != MAIN_CONVERSATION_ID)
+    return {"conversations": items}
+
+
 def parse_chat(body: bytes) -> tuple[object, str | None]:
     try:
         payload = json.loads(body)
@@ -249,6 +345,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/health":
             self.send_json(200, {"ok": True, "listen": "loopback"})
+            return
+        if self.path == "/api/conversations":
+            try:
+                self.send_json(200, process_conversations())
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+            return
+        history_match = re.fullmatch(r"/api/conversations/([A-Za-z0-9_-]{1,80})/history", self.path)
+        if history_match:
+            try:
+                self.send_json(200, process_history(history_match.group(1)))
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
             return
         if self.path == "/" or self.path == "/index.html":
             data = (ROOT / "index.html").read_bytes()

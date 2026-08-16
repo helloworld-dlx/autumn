@@ -8,5 +8,14 @@ assert.match(source, /const canonicalSessionKey = `agent:main:\$\{request\.sessi
 assert.match(source, /request\.source === "voice"/);
 assert.match(source, /fastMode,/);
 assert.doesNotMatch(source, /\/fast (?:on|off)/);
+assert.match(source, /client\.request\("chat\.history"/);
+assert.match(source, /limit: 40/);
+assert.match(source, /maxChars: 12_000/);
+assert.match(source, /request\.action === "history"/);
+assert.match(source, /client\.request\("sessions\.list"/);
+assert.match(source, /agent:main:companion:/);
+assert.match(source, /request\.action === "sessions"/);
+assert.ok(source.includes('scopes: ["operator.write"]'));
+assert.ok(!source.includes('operator.admin'));
 
 console.log("Gateway turn profile regression: PASS");

@@ -111,4 +111,46 @@ class VoiceBridgeTests(unittest.TestCase):
             bridge.process_chat('你好', 'main', lambda message, key, source: bridge.autumn_turn(message, key, FailedGateway(), source))
         self.assertEqual(caught.exception.code, 'GATEWAY_FAILED')
 
+    def test_main_history_is_bounded_and_filters_gateway_messages(self):
+        raw = [
+            {'role': 'user', 'text': '你好'},
+            {'role': 'assistant', 'text': '收到。'},
+            {'role': 'tool', 'text': 'private tool payload'},
+            {'role': 'assistant', 'text': ''},
+        ]
+        result = bridge.process_main_history(lambda key: raw)
+        self.assertEqual(result['conversationKey'], 'companion:main')
+        self.assertEqual(result['messages'], raw[:2])
+
+    def test_main_history_failure_is_safe(self):
+        with self.assertRaisesRegex(bridge.BridgeError, 'history') as caught:
+            bridge.process_main_history(lambda _key: (_ for _ in ()).throw(RuntimeError('down')))
+        self.assertEqual(caught.exception.code, 'HISTORY_UNAVAILABLE')
+
+    def test_generic_history_route_is_explicit(self):
+        source = Path(bridge.__file__).read_text(encoding='utf-8')
+        self.assertIn('/api/conversations/', source)
+        self.assertIn('process_history(history_match.group(1))', source)
+
+    def test_conversation_list_is_openclaw_native_and_main_first(self):
+        rows = [
+            {'id': 'c_project', 'label': 'FPGA 学习', 'preview': '继续桶形移位器', 'updatedAt': '2026-08-15T12:00:00Z'},
+            {'id': 'main', 'label': '', 'preview': 'Main preview', 'updatedAt': '2026-08-15T13:00:00Z'},
+            {'id': 'bad/id', 'label': 'reject'},
+        ]
+        result = bridge.process_conversations(lambda: rows)
+        self.assertEqual([item['id'] for item in result['conversations']], ['main', 'c_project'])
+        self.assertEqual(result['conversations'][0]['title'], 'Main')
+        self.assertEqual(result['conversations'][1]['title'], 'FPGA 学习')
+
+    def test_conversation_list_adds_main_when_missing(self):
+        result = bridge.process_conversations(lambda: [{'id': 'c_other', 'preview': 'hello'}])
+        self.assertEqual(result['conversations'][0]['id'], 'main')
+        self.assertEqual(result['conversations'][1]['id'], 'c_other')
+
+    def test_conversation_list_failure_is_safe(self):
+        with self.assertRaisesRegex(bridge.BridgeError, 'Conversation list') as caught:
+            bridge.process_conversations(lambda: (_ for _ in ()).throw(RuntimeError('down')))
+        self.assertEqual(caught.exception.code, 'CONVERSATIONS_UNAVAILABLE')
+
 if __name__ == '__main__': unittest.main()
