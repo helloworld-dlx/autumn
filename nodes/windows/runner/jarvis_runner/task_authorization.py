@@ -79,6 +79,15 @@ class TaskAuthorizationStore:
             self._requests[request_id] = request
             return request
 
+    def list_pending(self) -> tuple[PendingAuthorization, ...]:
+        """Return only currently fresh pending requests for read-only status surfaces."""
+        now = self._now()
+        with self._lock:
+            return tuple(
+                request for request in self._requests.values()
+                if request.status == "pending" and now < request.expires_at
+            )
+
     def approve(self, authorization_request_id: object, *, subject: object) -> PendingAuthorization:
         authenticated_subject = _normalized_subject(subject)
         with self._lock:

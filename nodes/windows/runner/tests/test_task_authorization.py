@@ -114,6 +114,18 @@ class TaskAuthorizationTests(unittest.TestCase):
                 task_summary="admin task", authority_level=AuthorityLevel.L5_SYSTEM_ADMIN,
             )
 
+    def test_list_pending_returns_only_live_pending_requests(self):
+        first = self._create()
+        second = self.store.create_request(
+            subject="autumn:user", adapter="codex", real_workspace=self.workspace,
+            task_summary="second task", network_policy="none",
+        )
+        self.store.approve(second.authorization_request_id, subject=second.subject)
+        pending = self.store.list_pending()
+        self.assertEqual([item.authorization_request_id for item in pending], [first.authorization_request_id])
+        self.clock.now += timedelta(minutes=10)
+        self.assertEqual(self.store.list_pending(), ())
+
     def test_new_store_cannot_see_pre_restart_requests(self):
         request = self._create()
         restarted = TaskAuthorizationStore(self.config, clock=self.clock)

@@ -5,8 +5,7 @@ from .auth import load_secret
 from .config import BridgeConfig,load_config,validate_config,ACTIONS
 from .runner_client import build_signed_request
 from .server import create_server
-from .file_pull import pull_file,cleanup_transfer,MAX_FILE_SIZE
-DEFAULT_TRANSFER_ROOT=Path("/home/xyzlh/jarvis-bridge/transfers")
+from .file_pull import pull_file,cleanup_transfer,MAX_FILE_SIZE,DEFAULT_TRANSFER_ROOT
 def doctor(c):
  try:validate_config(c);return True,{"loopback_only":True,"action_count_is_7":len(ACTIONS)==7,"config_valid":True}
  except ValueError:return False,{"config_valid":False}

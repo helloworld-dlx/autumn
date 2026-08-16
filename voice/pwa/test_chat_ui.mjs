@@ -11,7 +11,7 @@ assert.ok(start >= 0);
 assert.ok(clearAt >= 0 && clearAt < fetchAt, "only the submitted draft is cleared before the request");
 assert.doesNotMatch(script, /input\.disabled\s*=/, "composer remains editable while pending");
 assert.doesNotMatch(script.slice(fetchAt), /input\.value\s*=/, "reply or failure cannot clear a waiting draft");
-assert.match(script, /if\(!message\|\|pending\)return/, "pending sends are not concurrent");
+assert.match(script, /if\(\(!message&&!sendingFiles\.length\)\|\|pending\)return/, "pending sends are not concurrent and file-only sends are allowed");
 assert.match(script, /fetch\('\/api\/conversations\/'\+encodeURIComponent\(id\)\+'\/history'/, "active Conversation history loads on reload");
 assert.match(script, /fetch\('\/api\/conversations'/, "Conversation list loads from the Bridge");
 assert.match(script, /conversationId:sendingConversation/, "Chat sends to the active Conversation");
@@ -22,6 +22,19 @@ assert.doesNotMatch(source, /Project \/ Temporary 将在权限边界解除后接
 
 assert.match(source, /@media\(max-width:900px\)\{\.chat-shell\{[^}]*overflow:visible;backdrop-filter:none/, "mobile Conversation rail is not clipped by the Chat shell stacking context");
 assert.match(source, /if\(page==='chat'\)\{closeRail\(\);refreshConversations\(\)\.then\(\(\)=>loadHistory\(activeConversationId\)\)\}/, "entering Chat refreshes history so recent Talk turns become visible");
-assert.match(source, /form\.append\('conversationId',session\.conversationId\)/, "Talk uploads the active Conversation id");
+assert.match(source, /id="chat-file-input" type="file" multiple/, "Chat exposes a multi-file picker");
+assert.match(script, /MAX_ATTACHMENTS=3,MAX_ATTACHMENT_BYTES=8\*1024\*1024,MAX_ATTACHMENT_TOTAL=12\*1024\*1024/, "client file caps mirror Bridge policy");
+assert.match(script, /Promise\.all\(sendingFiles\.map\(encodeAttachment\)\)/, "selected files are encoded only for the submitted turn");
+assert.match(script, /JSON\.stringify\(\{conversationId:sendingConversation,message,attachments,newConversation\}\)/, "Chat forwards attachments and explicit first-turn provenance with the active Conversation");
+assert.match(source, /fetch\('\/api\/companion\/status',\{cache:'no-store'\}\)/, "live Companion status is fetched on demand");
+assert.match(source, /\/api\/files\/returned\//, "returned files expose a download route in Activity");
+assert.doesNotMatch(source, /setInterval\(/, "Companion status does not add background polling");
+
+assert.match(script, /const pinned=conversations\.find\(item=>item\.id===activeConversationId\)/, "sessions.list lag cannot silently switch the active Conversation");
+assert.match(script, /payload\.conversationKey!==expectedKey/, "Chat rejects any conversation routing mismatch");
+assert.match(source, /data\.conversationKey!==expectedKey/, "Talk rejects any conversation routing mismatch");
+assert.match(source, /newConversation/, "Chat and Talk mark only explicit newly-created Conversations for first-turn auto-title");
+assert.match(source, /replyAttachments/, "assistant-returned files are surfaced in the current Chat turn");
+assert.match(source, /attachment\.transferId\?' downloadable'/, "returned assistant attachments render as download cards");
 
 console.log("Chat composer and Main history regression: PASS");

@@ -55,7 +55,15 @@ function finish(runId, result) {
 function handleEvent(event, payload) {
   if (event !== "chat" || !payload || typeof payload !== "object") return;
   const runId = payload.runId;
-  if (!pending.has(runId)) return;
+  const item = pending.get(runId);
+  if (!item) return;
+  // OpenClaw chat events normally carry the canonical sessionKey. When present,
+  // require it to match the exact Companion bucket requested by this turn.
+  // Older Gateway builds that omit the field remain compatible.
+  if (typeof payload.sessionKey === "string" && payload.sessionKey !== item.sessionKey) {
+    finish(runId, { ok: false, error: "GATEWAY_SESSION_MISMATCH" });
+    return;
+  }
   if (payload.state === "final") {
     const text = visibleText(payload.message);
     finish(runId, text ? { ok: true, text } : { ok: false, error: "AUTUMN_REPLY_INVALID" });
@@ -64,23 +72,94 @@ function handleEvent(event, payload) {
   }
 }
 
-async function sendAndWait(sessionKey, message, fastMode) {
+async function sendAndWait(sessionKey, message, fastMode, attachments = []) {
   const runId = randomUUID();
   return await new Promise((resolve) => {
     const timer = setTimeout(
       () => finish(runId, { ok: false, error: "GATEWAY_TURN_TIMEOUT" }),
       130_000,
     );
-    pending.set(runId, { resolve, timer });
+    pending.set(runId, { resolve, timer, sessionKey });
     client.request("chat.send", {
       sessionKey,
       agentId: "main",
       message,
+      attachments,
       fastMode,
       timeoutMs: 120_000,
       idempotencyKey: runId,
     }).catch(() => finish(runId, { ok: false, error: "GATEWAY_REQUEST_FAILED" }));
   });
+}
+
+function attachmentNameFromLocation(value) {
+  const location = firstString(
+    typeof value === "string" ? value : "",
+    value?.url,
+    value?.mediaUrl,
+    value?.href,
+    value?.path,
+    value?.source?.url,
+    value?.source?.path,
+  );
+  if (!location) return "";
+  try {
+    const pathname = /^https?:/i.test(location) ? new URL(location).pathname : location;
+    const tail = pathname.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || "";
+    return decodeURIComponent(tail).slice(0, 180);
+  } catch {
+    return location.replace(/\\/g, "/").split("/").filter(Boolean).at(-1)?.slice(0, 180) || "";
+  }
+}
+
+function safeAttachmentMeta(value) {
+  if (!value || (typeof value !== "object" && typeof value !== "string")) return null;
+  const fileName = firstString(
+    typeof value === "object" ? value.fileName : "",
+    typeof value === "object" ? value.filename : "",
+    typeof value === "object" ? value.name : "",
+    attachmentNameFromLocation(value),
+  ).slice(0, 180);
+  const mimeType = firstString(
+    typeof value === "object" ? value.mimeType : "",
+    typeof value === "object" ? value.mime : "",
+    typeof value === "object" ? value.contentType : "",
+    typeof value === "object" ? value.type?.includes?.("/") ? value.type : "" : "",
+  ).slice(0, 120);
+  const sizeValue = typeof value === "object" ? (value.sizeBytes ?? value.size ?? value.bytes) : null;
+  const sizeBytes = Number.isFinite(sizeValue) && sizeValue >= 0 ? Math.floor(sizeValue) : null;
+  const declaredType = typeof value === "object" ? firstString(value.type, value.kind) : "";
+  if (!fileName && !mimeType && !["file", "attachment", "image", "document", "media"].includes(declaredType)) return null;
+  return { fileName: fileName || "附件", mimeType: mimeType || "application/octet-stream", sizeBytes };
+}
+
+function visibleAttachments(message) {
+  if (!message || typeof message !== "object") return [];
+  const candidates = [];
+  for (const field of ["attachments", "files", "media", "mediaUrls"]) {
+    if (Array.isArray(message[field])) candidates.push(...message[field]);
+  }
+  if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (!part || typeof part !== "object" || part.type === "text") continue;
+      if (["file", "attachment", "image", "document", "media"].includes(part.type) || part.fileName || part.filename || part.mediaUrl || part.url || part.source) {
+        candidates.push(part);
+        if (part.source && typeof part.source === "object") candidates.push(part.source);
+      }
+    }
+  }
+  const seen = new Set();
+  return candidates.map(safeAttachmentMeta).filter((item) => {
+    if (!item) return false;
+    const key = `${item.fileName}\u0000${item.mimeType}\u0000${item.sizeBytes ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 6);
+}
+
+function transcriptMessageId(message) {
+  return firstString(message?.__openclaw?.id, message?.messageId, message?.id);
 }
 
 async function loadHistory(sessionKey) {
@@ -91,11 +170,21 @@ async function loadHistory(sessionKey) {
     maxChars: 12_000,
   });
   const messages = Array.isArray(result?.messages) ? result.messages : [];
-  return messages.flatMap((message) => {
-    if (!message || !["user", "assistant"].includes(message.role)) return [];
+  const visible = [];
+  for (const message of messages) {
+    if (!message || !["user", "assistant"].includes(message.role)) continue;
     const text = visibleText(message);
-    return text ? [{ role: message.role, text }] : [];
-  });
+    const attachments = visibleAttachments(message);
+    const messageId = transcriptMessageId(message);
+    if (!text && !attachments.length) continue;
+    visible.push({
+      role: message.role,
+      text,
+      attachments,
+      ...(messageId ? { messageId } : {}),
+    });
+  }
+  return visible;
 }
 
 function firstString(...values) {
@@ -115,7 +204,8 @@ async function loadCompanionSessions() {
     if (!key.startsWith(prefix)) return [];
     const id = key.slice(prefix.length);
     if (!id) return [];
-    const label = firstString(session.label, session.title, session.displayName, session.derivedTitle);
+    // displayName identifies the Gateway client, not the conversation.
+    const label = firstString(session.label, session.title, session.derivedTitle);
     const preview = firstString(session.preview).slice(0, 160);
     const updatedAt = firstString(session.updatedAt, session.lastActivityAt, session.createdAt);
     return [{ id, key, label, preview, updatedAt }];
@@ -147,9 +237,10 @@ for await (const line of lines) {
       continue;
     }
     if (typeof request.message !== "string" || !["chat", "voice"].includes(request.source)) throw new Error("INVALID_REQUEST");
+    const attachments = request.source === "chat" && Array.isArray(request.attachments) ? request.attachments : [];
     const startedAt = Date.now();
     const canonicalSessionKey = `agent:main:${request.sessionKey}`;
-    const result = await sendAndWait(canonicalSessionKey, request.message, request.source === "voice");
+    const result = await sendAndWait(canonicalSessionKey, request.message, request.source === "voice", attachments);
     process.stdout.write(`${JSON.stringify({ ...result, latencyMs: Date.now() - startedAt })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({

@@ -26,8 +26,9 @@ HEALTH_RESPONSE = {"status": "ok", "protocol_version": "1.0", "runner": "jarvis-
 APPROVED_ROUTES = frozenset({
     ("GET", "/v1/health"), ("POST", "/v1/task"), ("POST", "/v1/file"),
     ("POST", "/v1/jobs/submit"), ("POST", "/v1/jobs/status"),
-    ("POST", "/v1/jobs/cancel"), ("POST", "/v1/jobs/result"),
+    ("POST", "/v1/jobs/cancel"), ("POST", "/v1/jobs/result"), ("POST", "/v1/jobs/list"),
     ("POST", "/v1/authorizations/request"), ("POST", "/v1/authorizations/approve"),
+    ("POST", "/v1/authorizations/list"),
     ("POST", "/v1/workers/pause"), ("POST", "/v1/workers/resume"),
     ("POST", "/v1/workers/status"),
 })
@@ -36,10 +37,12 @@ _JOB_ROUTE_ACTIONS = {
     "/v1/jobs/status": "jobs.status",
     "/v1/jobs/cancel": "jobs.cancel",
     "/v1/jobs/result": "jobs.result",
+    "/v1/jobs/list": "jobs.list",
 }
 _AUTHORIZATION_ROUTE_ACTIONS = {
     "/v1/authorizations/request": "authorizations.request",
     "/v1/authorizations/approve": "authorizations.approve",
+    "/v1/authorizations/list": "authorizations.list",
 }
 _WORKER_CONTROL_ROUTE_ACTIONS = {
     "/v1/workers/pause": "workers.pause",
@@ -278,6 +281,8 @@ class TailscaleRequestHandler(BaseHTTPRequestHandler):
                 output = self._job_status_for(request["arguments"])
             elif path == "/v1/jobs/cancel":
                 output = self._job_cancel(request["arguments"])
+            elif path == "/v1/jobs/list":
+                output = self._job_list(request["arguments"])
             else:
                 output = self._job_result_for(request["arguments"])
         except RunnerError as error:
@@ -306,6 +311,19 @@ class TailscaleRequestHandler(BaseHTTPRequestHandler):
             "expires_at": request.expires_at.isoformat(),
         }
 
+    @staticmethod
+    def _authorization_activity_summary(request: PendingAuthorization) -> dict:
+        # Companion activity is intentionally narrower than the worker API: no full workspace path.
+        workspace = ntpath.basename(str(request.real_workspace).rstrip("\\/")) or "workspace"
+        return {
+            "authorization_request_id": request.authorization_request_id,
+            "status": request.status,
+            "authority": request.authority_level.name,
+            "task": request.task_summary,
+            "workspace": workspace,
+            "expires_at": request.expires_at.isoformat(),
+        }
+
     def _authorization_api(self, path: str) -> None:
         if self._client_ip() not in self._config.allowed_task_clients:
             self._error(403, "SOURCE_NOT_ALLOWED")
@@ -331,6 +349,14 @@ class TailscaleRequestHandler(BaseHTTPRequestHandler):
                     subject=request["key_id"], adapter="codex", task_summary=arguments["task"],
                     real_workspace=arguments["real_workspace"], network_policy="none",
                 )
+            elif path == "/v1/authorizations/list":
+                if arguments != {}:
+                    raise RunnerError("REQUEST_INVALID", "authorization list request is invalid")
+                pending = self.server.authorizations.list_pending()  # type: ignore[attr-defined]
+                self._job_response(request["request_id"], "success", {
+                    "authorizations": [self._authorization_activity_summary(item) for item in pending]
+                })
+                return
             else:
                 if not isinstance(arguments, dict) or set(arguments) != {"authorization_request_id"}:
                     raise RunnerError("REQUEST_INVALID", "authorization approval is invalid")
@@ -413,6 +439,18 @@ class TailscaleRequestHandler(BaseHTTPRequestHandler):
                 raise RunnerError("REQUEST_INVALID", "job submit request is invalid")
         current = self.server.job_store.get(job.job_id)  # type: ignore[attr-defined]
         return self._job_status(current or job)
+
+    def _job_list(self, arguments: object) -> dict:
+        if not isinstance(arguments, dict) or set(arguments) != {"limit"}:
+            raise RunnerError("REQUEST_INVALID", "job list request is invalid")
+        limit = arguments.get("limit")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50:
+            raise RunnerError("REQUEST_INVALID", "job list limit is invalid")
+        records = sorted(
+            self.server.job_store.list_records(),  # type: ignore[attr-defined]
+            key=lambda record: record.updated_at, reverse=True,
+        )[:limit]
+        return {"jobs": [self._job_status(record) for record in records]}
 
     def _job_record(self, arguments: object) -> JobRecord:
         if not isinstance(arguments, dict) or set(arguments) != {"job_id"} or not isinstance(arguments["job_id"], str):

@@ -249,7 +249,7 @@ Autumn **不得自行 resume**。只有用户明确要求恢复时（"恢复 Wor
 - `files.search`
 - 受控 `/v1/file` 文件导出
 - Pi `file-pull`
-- 本人飞书文件回传
+- 本人文件回传（Companion / Feishu 按当前入口路由）
 
 ### 搜索
 
@@ -264,19 +264,25 @@ Windows 文件搜索只读。
 1. Autumn 先展示候选;
 2. D老师 第二条明确消息"发第 1 个 / 把这个发给我"视为本人发送确认;
 3. 用户直接给出精确 D盘文件路径并明确要求发送,也视为本次确认;
-4. 默认只能发到 D老师 自己的 Autumn 飞书 direct chat;
+4. **默认回传目标跟随当前入口，而不是固定飞书：**
+   - 当前是 Autumn Companion / PWA 会话（`agent:main:companion:*`）时，"发给我 / 回传 / 让我下载"默认表示回传到 Companion，必须调用 `autumn_file_return`;
+   - 当前是 Feishu 会话时，同样表述默认沿用现有 Windows → Feishu sender;
+   - 在 Companion 会话中，除非用户明确说"发到飞书"，不得改走 `lark-file-sender` / `lark-cli` / Feishu 原生文件发送;
+   - 在 Feishu 会话中，除非用户明确说"放到 Companion / 在 Companion 下载"，不得默认切换到 Companion 回传。
 5. 不允许模型随意指定第三方 recipient;
 6. 第三方 / 群聊发送必须单独明确确认;
 7. 不自动打包目录;
 8. 不修改 Windows 原文件;
-9. Pi 临时 transfer / staging 发送后清理;
-10. Feishu 发送失败不自动重发,避免重复附件。
+9. Companion 回传成功后，文件应直接作为当前对话的下载附件出现，并同时可在 Activity → Files 找到；不得改起临时 LAN HTTP server，也不得只给 Pi/LAN 路径。
+10. 用户要求把 **Autumn 刚生成的文本/Markdown/代码内容** 作为文件发到当前 Companion 时，直接调用 `autumn_companion_artifact`；不要先在 Pi 创建临时源文件再发送。
+11. `autumn_companion_artifact` 不读取/删除任意 Pi 文件；它只把本轮生成内容写入受控 transfer。若用户要求删除一个既有 Windows/Pi 原文件，仍按 Delete HARD DENY 处理，且不得虚假声称“已删除”。
+12. Feishu 发送失败不自动重发,避免重复附件。
 
-普通成功回复保持自然:
+普通成功回复保持自然，并与真实 transport/tool result 一致。Companion 示例:
 
-> "发过去了。临时文件也收干净了。"
+> "已经放到当前对话里了，可以直接下载。"
 
-而不是输出 transfer_id / SHA256。
+只有对应工具真实返回 `status=ready` 才能这么说；不得输出 transfer_id / SHA256，也不得声称执行了未发生的删除。
 
 ---
 
@@ -340,12 +346,14 @@ Windows 文件搜索只读。
 - 群聊:默认不发送;
 - 不自行转发私人信息。
 
-Pi 本地文件/图片发给本人可复用现有:
+Pi 本地文件/图片发送仍可复用现有 Feishu 能力，但 **只在 Feishu 为当前入口，或用户明确要求发到飞书时** 使用:
 - `lark-file-sender`
 - `lark-cli`
 - Feishu 原生能力
 
-优先复用,不自研重复上传协议。
+Autumn Companion / PWA 会话中的 Windows 文件回传默认目标是 Companion，不得因为旧 Feishu sender 已 READY 就绕过 `autumn_file_return`。
+若文件内容是 Autumn 本轮刚生成的文本/Markdown/代码，则用 `autumn_companion_artifact` 直接生成当前对话附件；不得绕到 Feishu，也不得启动临时 HTTP server。
+优先复用既有能力，但必须先遵守当前入口的 transport routing；不自研重复上传协议。
 
 ---
 
@@ -359,7 +367,13 @@ Pi 本地文件/图片发给本人可复用现有:
 - 记忆 → memory;
 - 树莓派本地文件发送 →现有 file sender skill;
 - Windows 状态 / D盘文件 → Autumn Windows tools;
-- Windows 文件回传 → search → user selection → file-pull → lark-file-sender → cleanup。
+- Companion 文件发送采用 **current-entry transport routing**：
+  - Windows 既有文件 → search → explicit user selection → **MUST `autumn_file_return`** → 当前 Chat 附件 + Activity/Files；
+  - Autumn 本轮生成的文本/Markdown/代码 → **MUST `autumn_companion_artifact`** → 当前 Chat 附件 + Activity/Files；
+  - Feishu → 既有 file-pull / file sender → Feishu。
+  - Companion 中只有用户明确说"发到飞书"时才允许走 Feishu sender；"发给我/回传/让我下载/这里直接发"本身不构成切换到飞书的理由。
+  - Companion 不得为了文件交付启动临时 HTTP server、暴露 LAN URL 或只返回 Pi 路径。
+  - 不得因找到候选文件就自动回传。用户已明确选定精确 Windows 路径/唯一结果并要求发送后，必须在同一轮执行当前入口对应的发送工具；对应工具未获得 `status=ready` 时不得声称文件已经可下载。
 
 除非原生能力明确做不到,不新增服务。
 

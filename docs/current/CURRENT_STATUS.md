@@ -1,6 +1,6 @@
 # Autumn V0.2 · One Autumn — Current Status
 
-**As of:** 2026-08-14  
+**As of:** 2026-08-16
 **AUTUMN_V0_2_ONE_AUTUMN:** PASS / CLOSED / FROZEN  
 **PHASE2B:** PASS / CLOSED / FROZEN  
 **PHASE2C:** PASS / CLOSED / FROZEN  
@@ -18,6 +18,10 @@
 **PHASE3B-0C2-SCOPE-A:** PASS / CLOSED — 417 unreferenced artifacts removed; OpenClaw reported 393,022,980 bytes reclaimed; physical JSONL decreased from 386 to 167.
 **PHASE3B-0C2-SCOPE-B:** DEFERRED / NON-BLOCKING — 8 clearly test-named Voice sessions remain pending `operator.admin`/`operator.pairing` authority; 20 UUID Voice sessions are KEEP.
 **PHASE3B-0C:** PASS / CLOSED — Companion session hygiene closure reconciled without changing Gateway authority or deleting user UUID sessions.
+**PHASE3B-3:** PASS / CLOSED — existing Companion continuation keeps its exact `companion:<id>` Gateway key; no retroactive title on an existing untitled conversation; Gateway event key mismatches fail closed as `GATEWAY_SESSION_MISMATCH`.
+**PHASE3B-4:** PASS / CLOSED — current-chat Windows file return and bounded generated text artifacts appear as durable Companion attachments and Activity → Files downloads; no Feishu, temporary HTTP, or LAN fallback.
+**PHASE3B-5:** PASS / CLOSED — `memory_search` rebuilt only main's missing index identity with Gateway stopped, then returned to valid FTS-only operation; no provider, database, or other-agent change.
+**PHASE3B:** PASS / CLOSED / FROZEN — Companion presence final acceptance complete. `PHASE3B-0B2` remains a separate non-blocking Tailscale handoff diagnostic, not a reopened V0.3 scope.
 
 ## Current Product Truth
 
@@ -35,6 +39,7 @@
 | Headless Runner | PASS / FROZEN；single `100.84.13.42:27891` listener；hidden startup chain |
 | Router Lite | PASS / FROZEN；One Autumn UX；无独立 Router service |
 | Portable Voice / Phase 2C | PASS / CLOSED / FROZEN；Quick + Continuous，共用既有 Gateway、Fast Mode、STT/TTS 链路；无硬 turn limit |
+| Companion Presence / Phase 3B | PASS / CLOSED / FROZEN；exact Conversation continuity、current-chat attachments、bounded generated artifacts、Activity Files、PWA shell v6 与 main memory index 已生产验收 |
 | Python / Node | AUTHORIZATION_REQUIRED；production execution authorization path incomplete，不承诺确认后执行 |
 | OpenCode Worker | DEFERRED TO V0.3 — APPROVED SCOPE CHANGE；不是 PASS/不是 blocker |
 | Complexity Gate | DEFERRED；不是 PASS |
@@ -57,6 +62,6 @@
 - OpenCode Worker: DEFERRED TO V0.3 BY APPROVED SCOPE CHANGE.
 - Complexity Gate: DEFERRED.
 - `open_app`: deferred P1/later; natural barge-in, realtime Voice runtime and Voice + Eyes fusion: V0.3; Wake Word and Ambient Mic: not V0.2.
-- No V0.3 implementation is authorized by this status.
+- V0.3 Phase 3B is frozen. Do not begin Phase 3C without a new explicit scope.
 
 Canonical release record: `AUTUMN_V0_2_FINAL_ACCEPTANCE.md`.

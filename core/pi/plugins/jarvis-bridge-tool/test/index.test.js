@@ -9,7 +9,11 @@ import { fileURLToPath } from "node:url";
 
 import pluginEntry, {
   callBridgeNodes,
+  callBridgeFileReturn,
+  callBridgeCompanionArtifact,
   execAutumnNodes,
+  execAutumnFileReturn,
+  execAutumnCompanionArtifact,
   execPing,
 } from "../dist/index.js";
 
@@ -66,7 +70,7 @@ test("manifest and runtime register the exact current tool set", () => {
   const api = loadPlugin();
   const names = api.registeredTools.map((entry) => entry.tool.name).sort();
   assert.deepEqual(names, [
-    "autumn_nodes", "jarvis_list_directory", "jarvis_ping", "jarvis_program_list",
+    "autumn_companion_artifact", "autumn_file_return", "autumn_nodes", "jarvis_list_directory", "jarvis_ping", "jarvis_program_list",
     "jarvis_program_run", "jarvis_search_files", "jarvis_system_info", "jarvis_system_status",
     "worker_authorization_approve", "worker_authorization_request", "worker_cancel",
     "worker_control_status", "worker_emergency_stop", "worker_result", "worker_resume",
@@ -124,6 +128,49 @@ test("invalid Node input has no write path and cannot form an arbitrary URL", as
     { action: "touch", node_id: "xiaomi15" }, {}, { fetch: async () => { throw new Error("must not call"); } },
   );
   assert.equal(action.details.status, "QUERY_FAILED");
+});
+
+test("autumn_file_return is exact-path, token-authenticated, and does not leak Pi local paths", async () => {
+  const mock = fakeFetch([jsonResponse(200, {
+    status: "succeeded", transfer_id: "abcdefghijklmnop", filename: "report.pdf", size: 1234,
+    sha256: "deadbeef", local_path: "/must/not/leak",
+  })]);
+  const raw = await callBridgeFileReturn("D:\\docs\\report.pdf", {
+    fetch: mock.fetch, readToken: () => "t".repeat(32),
+  });
+  assert.equal(raw.ok, true);
+  assert.equal(mock.calls[0].url, "http://127.0.0.1:27901/v1/files/pull");
+  assert.equal(mock.calls[0].init.method, "POST");
+  assert.equal(mock.calls[0].init.headers["x-jarvis-bridge-token"], "t".repeat(32));
+  assert.deepEqual(JSON.parse(mock.calls[0].init.body), { path: "D:\\docs\\report.pdf" });
+  const result = await execAutumnFileReturn({ path: "D:\\docs\\report.pdf" }, {}, {
+    fetch: async () => jsonResponse(200, { status: "succeeded", transfer_id: "abcdefghijklmnop", filename: "report.pdf", size: 1234 }),
+    readToken: () => "t".repeat(32),
+  });
+  assert.equal(result.details.status, "ready");
+  assert.equal(result.details.transfer_id, "abcdefghijklmnop");
+  assert.equal(JSON.stringify(result).includes("local_path"), false);
+});
+
+test("autumn_companion_artifact creates bounded text files without arbitrary Pi path access", async () => {
+  const mock = fakeFetch([jsonResponse(200, {
+    status: "succeeded", transfer_id: "qrstuvwxyzABCDEF", filename: "note.md", size: 5, sha256: "abc",
+  })]);
+  const raw = await callBridgeCompanionArtifact("note.md", "hello", {
+    fetch: mock.fetch, readToken: () => "t".repeat(32),
+  });
+  assert.equal(raw.ok, true);
+  assert.equal(mock.calls[0].url, "http://127.0.0.1:27901/v1/files/publish-text");
+  assert.deepEqual(JSON.parse(mock.calls[0].init.body), { filename: "note.md", content: "hello" });
+  const result = await execAutumnCompanionArtifact({ filename: "note.md", content: "hello" }, {}, {
+    fetch: async () => jsonResponse(200, { status: "succeeded", transfer_id: "qrstuvwxyzABCDEF", filename: "note.md", size: 5 }),
+    readToken: () => "t".repeat(32),
+  });
+  assert.equal(result.details.status, "ready");
+  assert.equal(result.details.transfer_id, "qrstuvwxyzABCDEF");
+  assert.equal(JSON.stringify(result).includes("local_path"), false);
+  const rejected = await callBridgeCompanionArtifact("../secret.md", "x", { fetch: async () => { throw new Error("must not call"); } });
+  assert.equal(rejected.bridgeError, "artifact_filename_invalid");
 });
 
 test("existing read-only ping remains a single Bridge request", async () => {

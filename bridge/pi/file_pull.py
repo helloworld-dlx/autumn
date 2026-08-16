@@ -33,7 +33,14 @@ from .auth import load_secret
 from .config import BridgeConfig
 
 MAX_FILE_SIZE = 16 * 1024 * 1024  # 16777216 bytes — must match Runner's limit
+MAX_TEXT_ARTIFACT_BYTES = 48 * 1024  # stays below Bridge's 64 KiB authenticated request cap
+DEFAULT_TRANSFER_ROOT = Path("/home/xyzlh/jarvis-bridge/transfers")
 CHUNK_SIZE = 64 * 1024
+SAFE_TEXT_ARTIFACT_EXTENSIONS = frozenset({
+    ".md", ".txt", ".json", ".yaml", ".yml", ".csv",
+    ".v", ".sv", ".vh", ".svh", ".py", ".c", ".h", ".cpp", ".hpp",
+    ".js", ".mjs", ".ts", ".html", ".css", ".sh",
+})
 
 # Header names must mirror jarvis_runner/network.py:FILE_AUTH_HEADERS exactly.
 FILE_AUTH_HEADERS = {
@@ -113,6 +120,87 @@ def _fail_transfer(transfer_dir: Path, transfer_id: str, code: str, **extra) -> 
     err = {"status": "failed", "error_code": code, "transfer_id": transfer_id}
     err.update(extra)
     return err
+
+
+def publish_text_artifact(filename: str, content: str, *, transfer_root: Path) -> tuple:
+    """Create one Companion-download transfer from model-generated text.
+
+    This deliberately accepts content, not an arbitrary Pi source path. That keeps
+    the capability inside the existing Companion transfer boundary and avoids
+    turning the plugin into a general host-file exfiltration tool.
+    """
+    if not isinstance(filename, str) or not isinstance(content, str):
+        return None, {"status": "failed", "error_code": "ARTIFACT_INVALID"}
+    clean_name = filename.strip()
+    if (
+        not clean_name
+        or len(clean_name) > 180
+        or clean_name in {".", ".."}
+        or any(ch in clean_name for ch in ("/", "\\", "\r", "\n", "\x00"))
+    ):
+        return None, {"status": "failed", "error_code": "ARTIFACT_FILENAME_INVALID"}
+    suffix = Path(clean_name).suffix.lower()
+    if suffix not in SAFE_TEXT_ARTIFACT_EXTENSIONS:
+        return None, {"status": "failed", "error_code": "ARTIFACT_TYPE_NOT_ALLOWED"}
+    data = content.encode("utf-8")
+    if not data or len(data) > MAX_TEXT_ARTIFACT_BYTES:
+        return None, {
+            "status": "failed",
+            "error_code": "ARTIFACT_TOO_LARGE" if data else "ARTIFACT_EMPTY",
+            "max_bytes": MAX_TEXT_ARTIFACT_BYTES,
+        }
+
+    transfer_root = Path(transfer_root).resolve()
+    transfer_root.mkdir(parents=True, exist_ok=True)
+    try:
+        transfer_root.chmod(0o700)
+    except OSError:
+        pass
+
+    transfer_id = secrets.token_urlsafe(24)
+    transfer_dir = transfer_root / transfer_id
+    transfer_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        transfer_dir.chmod(0o700)
+    except OSError:
+        pass
+    final_path = transfer_dir / "data.bin"
+    meta_path = transfer_dir / "meta.json"
+    try:
+        with open(final_path, "xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.chmod(final_path, 0o600)
+        except OSError:
+            pass
+        metadata = {
+            "transfer_id": transfer_id,
+            "filename": clean_name,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "state": "completed",
+            "source": "companion-generated-text",
+        }
+        meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            os.chmod(meta_path, 0o600)
+        except OSError:
+            pass
+        return {
+            "status": "succeeded",
+            "transfer_id": transfer_id,
+            "filename": clean_name,
+            "size": len(data),
+            "sha256": metadata["sha256"],
+        }, None
+    except OSError:
+        _safe_remove(final_path)
+        _safe_remove(meta_path)
+        _safe_rmdir(transfer_dir)
+        return None, {"status": "failed", "error_code": "WRITE_FAILED", "transfer_id": transfer_id}
 
 
 def pull_file(path: str, c: BridgeConfig, *, transfer_root: Path) -> tuple:

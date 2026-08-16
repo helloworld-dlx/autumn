@@ -1,4 +1,4 @@
-const CACHE_NAME = "autumn-companion-shell-v3";
+const CACHE_NAME = "autumn-companion-shell-v6";
 const APP_SHELL = [
   "/",
   "/index.html",

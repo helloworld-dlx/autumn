@@ -7,6 +7,7 @@ from jarvis_bridge.runner_client import build_signed_request,canonical_payload,c
 from urllib.error import URLError
 import socket
 from jarvis_bridge.server import BridgeServer
+from jarvis_bridge.file_pull import publish_text_artifact
 from jarvis_bridge.node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15,WINDOWS_HEALTH_TTL
 from unittest.mock import patch,ANY
 
@@ -129,6 +130,61 @@ class BridgeTests(unittest.TestCase):
    status,node=call("/v1/nodes/pi5-core");self.assertEqual(status,200);self.assertEqual(node["capabilities"],PI5_CORE["capabilities"])
    status,error=call("/v1/nodes/missing");self.assertEqual(status,404);self.assertEqual(error["error_code"],"NOT_FOUND")
   finally:z.shutdown();z.server_close();thread.join()
+
+ def test_companion_generated_text_artifact_is_bounded_and_download_ready(self):
+  with tempfile.TemporaryDirectory() as temp:
+   root=Path(temp)/"transfers"
+   result,error=publish_text_artifact("桶形移位器学习笔记.md","# 桶形移位器\n\nhello",transfer_root=root)
+   self.assertIsNone(error);self.assertEqual(result["status"],"succeeded")
+   folder=root/result["transfer_id"]
+   self.assertEqual((folder/"data.bin").read_text("utf-8"),"# 桶形移位器\n\nhello")
+   meta=json.loads((folder/"meta.json").read_text("utf-8"));self.assertEqual(meta["filename"],"桶形移位器学习笔记.md");self.assertEqual(meta["source"],"companion-generated-text")
+   bad,error=publish_text_artifact("../secret.md","x",transfer_root=root);self.assertIsNone(bad);self.assertEqual(error["error_code"],"ARTIFACT_FILENAME_INVALID")
+   bad,error=publish_text_artifact("unsafe.bin","x",transfer_root=root);self.assertIsNone(bad);self.assertEqual(error["error_code"],"ARTIFACT_TYPE_NOT_ALLOWED")
+
+ def test_companion_publish_text_endpoint_is_token_authenticated(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32)
+  z=BridgeServer(replace(self.c,listen_port=0),start_probe=False);thread=threading.Thread(target=z.serve_forever);thread.start()
+  def call(token):
+   body=json.dumps({"filename":"note.md","content":"hello"},ensure_ascii=False).encode();h={"Content-Type":"application/json"}
+   if token:h["X-Jarvis-Bridge-Token"]=token
+   x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST","/v1/files/publish-text",body,h);r=x.getresponse();payload=json.loads(r.read());x.close();return r.status,payload
+  try:
+   self.assertEqual(call(None)[0],401)
+   with patch("jarvis_bridge.server.DEFAULT_TRANSFER_ROOT",Path(self.t.name)/"published"):
+    status,payload=call("t"*32);self.assertEqual(status,200);self.assertEqual(payload["filename"],"note.md");self.assertEqual(payload["status"],"succeeded")
+  finally:z.shutdown();z.server_close();thread.join()
+
+ def test_companion_status_is_loopback_read_model_and_sanitized(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32)
+  z=BridgeServer(replace(self.c,listen_port=0),start_probe=False);thread=threading.Thread(target=z.serve_forever);thread.start()
+  try:
+   with patch("jarvis_bridge.server.job_list",return_value=(200,{"status":"success","output":{"jobs":[{"job_id":"j1","status":"running"}]}})), \
+        patch("jarvis_bridge.server.authorization_list",return_value=(200,{"status":"success","output":{"authorizations":[{"authorization_request_id":"a1","task":"write docs","workspace":"autumn"}]}})), \
+        patch("jarvis_bridge.server.worker_control_status",return_value=(200,{"status":"success","output":{"workers_paused":False}})):
+    x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("GET","/v1/internal/companion/status");r=x.getresponse();payload=json.loads(r.read());x.close()
+   self.assertEqual(r.status,200)
+   self.assertTrue(payload["windowsDataAvailable"]);self.assertFalse(payload["workersPaused"])
+   self.assertEqual(payload["jobs"][0]["job_id"],"j1");self.assertEqual(payload["approvals"][0]["workspace"],"autumn")
+   self.assertIn("pi5-core",[node["node_id"] for node in payload["nodes"]])
+   self.assertNotIn("token",json.dumps(payload))
+  finally:z.shutdown();z.server_close();thread.join()
+
+ def test_companion_file_pull_requires_token_and_never_returns_local_path(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32)
+  z=BridgeServer(replace(self.c,listen_port=0),start_probe=False);thread=threading.Thread(target=z.serve_forever);thread.start()
+  def call(token=None):
+   headers={"Content-Type":"application/json"}
+   if token: headers["X-Jarvis-Bridge-Token"]=token
+   x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST","/v1/files/pull",json.dumps({"path":"D:\\docs\\report.pdf"}).encode(),headers);r=x.getresponse();payload=json.loads(r.read());x.close();return r.status,payload
+  try:
+   with patch("jarvis_bridge.server.pull_file",return_value=({"status":"succeeded","transfer_id":"abcdefghijklmnop","local_path":"/private/data.bin","filename":"report.pdf","size":5,"sha256":"abc"},None)) as pull:
+    self.assertEqual(call()[0],401)
+    status,payload=call("t"*32)
+    self.assertEqual(status,200);self.assertEqual(payload["filename"],"report.pdf");self.assertNotIn("local_path",payload)
+    pull.assert_called_once()
+  finally:z.shutdown();z.server_close();thread.join()
+
  def test_05_06_bridge_http_accepts_program_actions(self):
   # 5) Bridge HTTP 接受 program.list
   # 6) Bridge HTTP 接受 program.run

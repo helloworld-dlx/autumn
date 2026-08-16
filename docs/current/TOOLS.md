@@ -15,6 +15,9 @@
 | Codex Worker | READY | L3 exact authorization + Runner staging + CREATE/MODIFY-only Publish Gate |
 | Emergency Stop | READY | Runner + Pi/OpenClaw production E2E PASS |
 | Node observation | READY | `autumn_nodes` reads the live Pi Node Registry; it is read-only and capability is not authorization |
+| Companion Chat attachments | READY_AFTER_3B_SMOKE | Browser files travel with the current OpenClaw Conversation; no duplicate transcript store |
+| Companion Windows file return | READY_AFTER_3B_SMOKE | `autumn_file_return` stages one explicitly requested Windows file and surfaces it in the current Companion turn + Activity → Files |
+| Companion generated text artifact | READY_AFTER_3B_SMOKE | `autumn_companion_artifact` creates one bounded text/Markdown/code download directly in Companion; no temp HTTP server |
 
 ## 0.5 权限域（事实）
 
@@ -45,6 +48,23 @@ Use this single read-only tool when the user asks which devices are available, a
 - Presence is observational. **CAPABILITY != AUTHORIZATION**: a declared `job.submit` capability does not approve a job.
 
 This tool never touches presence, registers a Node, executes a capability, wakes a device, or changes authorization.
+
+### `autumn_file_return`
+Use only after the user explicitly asks to send/return one exact **existing Windows file** to Autumn Companion (direct path or a clearly selected search result). Once that exact selection and explicit return intent are both present, call `autumn_file_return` in the same turn; do not merely acknowledge and do not claim success before the tool returns `status=ready`. It uses the existing signed Windows file-export boundary, stages the file on Pi, and the Companion Bridge surfaces the new transfer as a download attachment in the current assistant message as well as Activity → Files.
+
+- One exact file per call; no directory export.
+- Read-only on Windows; no delete / rename / move / shell.
+- Do not expose the Pi staging path or create a temporary LAN HTTP server.
+- Feishu conversations keep using the existing Feishu file sender rather than this Companion download surface.
+
+### `autumn_companion_artifact`
+Use when the user asks Autumn to turn **content generated in the current turn** into a text/Markdown/code file and send it here/current Companion chat. Pass only a safe filename and the complete generated text content.
+
+- Creates a bounded UTF-8 artifact directly in the existing Companion transfer store; no arbitrary Pi source path is accepted.
+- Does not read or delete existing Pi/Windows files.
+- Does not start an HTTP server and does not send to Feishu unless the user explicitly asks for Feishu.
+- On `status=ready`, the Companion Bridge attaches the resulting transfer to the current assistant message and Activity → Files.
+- If the user says “发完以后删掉” about this newly generated content, no separate source file needs to be created; do **not** claim deletion of an existing file. Existing-file Delete remains HARD DENY.
 
 ## 2. Windows Tools
 
@@ -130,7 +150,13 @@ Phase 2B-5B 新增三个 worker 控制工具，Bridge 纯透传，Runner 是唯�
 ### Feishu
 优先复用当前 OpenClaw / Feishu 已有能力：文字、图片、文件、媒体、卡片。以现场 OpenClaw 版本和实际工具 schema 为准。
 
-如果树莓派本地已经有目标文件，优先尝试原生 Feishu / file-transfer 能力，不自行重写 Feishu API。
+**Transport boundary:** 这些 Feishu / file-transfer 能力只在当前入口就是 Feishu，或用户明确要求"发到飞书"时作为默认发送路径。
+如果当前入口是 Autumn Companion / PWA：
+- Windows 既有文件的"发给我 / 回传 / 让我下载"默认必须走 `autumn_file_return`;
+- Autumn 本轮刚生成的文本/Markdown/代码文件默认必须走 `autumn_companion_artifact`;
+- 不得因为 Feishu sender 已 READY 而把附件另发到飞书，也不得启动临时 HTTP server 暴露 LAN URL。
+
+如果 Feishu 是当前目标且树莓派本地已经有目标文件，优先尝试原生 Feishu / file-transfer 能力，不自行重写 Feishu API。
 
 ### file-transfer
 当前已安装。
@@ -160,9 +186,11 @@ Phase 2B-5B 新增三个 worker 控制工具，Bridge 纯透传，Runner 是唯�
 
 “运行 hello_jarvis” → `jarvis_program_run`
 
-“把树莓派上的这个文件发给我” → 优先 Feishu / file-transfer 原生能力
+“把树莓派上的这个文件发给我” → 跟随当前入口：Feishu 会话优先 Feishu / file-transfer；Companion 会话不得自动切去 Feishu。若是既有 Pi 文件且当前 Companion 暂无批准的任意 Pi-path 回传工具，应明确能力边界，不得临时起 HTTP server。
 
-“把 Windows 搜到的第一个文件发给我” → 当前仍需确认 Windows → 树莓派 的受控文件数据链路是否已经有原生方案。不要伪装成已支持。**（3B-3 后已更新：见下"Windows → Feishu 文件回传"）**
+“把 Windows 搜到的第一个文件发给我” → 当前入口若为 Companion：明确选择后 **必须** 用 `autumn_file_return`；若为 Feishu：继续现有 Windows → Feishu sender。除非用户明确指定另一 transport，否则不得跨入口发送。两条链都不得跳过明确文件选择。
+
+“把你刚写的桶形移位器笔记做成 md，在这里发给我” → Companion 中 **必须** 用 `autumn_companion_artifact`；不要先写 Pi 临时文件，不要发飞书，不要起临时 HTTP server。
 
 ### 4.1 Router Lite (Phase 2B_6)
 
@@ -183,8 +211,10 @@ Phase 2B-5B 新增三个 worker 控制工具，Bridge 纯透传，Runner 是唯�
 
 ## 5. Known Gaps / To Verify
 
-### Windows → Feishu 文件回传
+### Windows → Feishu 文件回传（legacy / Feishu-entry only）
 **READY**（2026-08-07，Phase 3B-3）
+
+> 这是 Feishu 当前为入口或用户明确要求"发到飞书"时的兼容链路。它不是 Companion / PWA 的默认文件回传路径；Companion 默认使用 `autumn_file_return` → Activity/Files。
 
 链路：`Search → explicit user selection → file-pull → lark-file-sender → cleanup`
 

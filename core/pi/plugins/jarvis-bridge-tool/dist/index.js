@@ -37,6 +37,8 @@ export const BRIDGE_TOKEN_FILE = "/home/xyzlh/.config/jarvis-bridge/bridge_local
 // URL returns 404 NOT_FOUND.
 export const BRIDGE_HOST_ONLY_URL = "http://127.0.0.1:27901";
 export const BRIDGE_NODES_URL = "http://127.0.0.1:27901/v1/nodes";
+export const BRIDGE_FILE_RETURN_URL = "http://127.0.0.1:27901/v1/files/pull";
+export const BRIDGE_COMPANION_ARTIFACT_URL = "http://127.0.0.1:27901/v1/files/publish-text";
 
 // Status codes that must NOT be retried / surfaced as opaque errors.
 // The runtime surfaces the original Bridge error body so the LLM can see
@@ -148,6 +150,67 @@ export async function callBridge(action, args, deps = {}) {
   };
 }
 
+export async function callBridgeFileReturn(path, deps = {}) {
+  const fetchImpl = deps.fetch ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") return { ok: false, status: 0, bridgeError: "bridge_unreachable" };
+  if (typeof path !== "string" || !path.trim() || path.length > 4096) {
+    return { ok: false, status: 400, bridgeError: "invalid_path" };
+  }
+  const token = (deps.readToken ?? readBridgeToken)();
+  const headers = { "content-type": "application/json" };
+  if (token) headers["x-jarvis-bridge-token"] = token;
+  let response;
+  try {
+    response = await fetchImpl(deps.fileReturnUrl ?? BRIDGE_FILE_RETURN_URL, {
+      method: "POST", headers, body: JSON.stringify({ path }),
+    });
+  } catch (err) {
+    return { ok: false, status: 0, bridgeError: "bridge_unreachable", bridgeMessage: String(err?.message ?? err) };
+  }
+  let payload = null;
+  try { payload = await response.json(); } catch {}
+  if (!response.ok) {
+    return {
+      ok: false, status: response.status,
+      bridgeError: payload?.error_code || `http_${response.status}`,
+      bridgeMessage: payload?.message || "File return failed",
+    };
+  }
+  return { ok: true, status: response.status, payload };
+}
+
+export async function callBridgeCompanionArtifact(filename, content, deps = {}) {
+  const fetchImpl = deps.fetch ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") return { ok: false, status: 0, bridgeError: "bridge_unreachable" };
+  if (typeof filename !== "string" || !filename.trim() || filename.length > 180 || /[\\/\r\n\0]/.test(filename)) {
+    return { ok: false, status: 400, bridgeError: "artifact_filename_invalid" };
+  }
+  if (typeof content !== "string" || !content || Buffer.byteLength(content, "utf8") > 48 * 1024) {
+    return { ok: false, status: 413, bridgeError: "artifact_content_invalid" };
+  }
+  const token = (deps.readToken ?? readBridgeToken)();
+  const headers = { "content-type": "application/json" };
+  if (token) headers["x-jarvis-bridge-token"] = token;
+  let response;
+  try {
+    response = await fetchImpl(deps.companionArtifactUrl ?? BRIDGE_COMPANION_ARTIFACT_URL, {
+      method: "POST", headers, body: JSON.stringify({ filename: filename.trim(), content }),
+    });
+  } catch (err) {
+    return { ok: false, status: 0, bridgeError: "bridge_unreachable", bridgeMessage: String(err?.message ?? err) };
+  }
+  let payload = null;
+  try { payload = await response.json(); } catch {}
+  if (!response.ok) {
+    return {
+      ok: false, status: response.status,
+      bridgeError: payload?.error_code || `http_${response.status}`,
+      bridgeMessage: payload?.message || "Companion artifact publish failed",
+    };
+  }
+  return { ok: true, status: response.status, payload };
+}
+
 // ---------------------------------------------------------------------------
 // Bridge Job API client (Phase 2B-3B)
 // Calls /v1/jobs/submit, /v1/jobs/status, /v1/jobs/cancel, /v1/jobs/result
@@ -238,6 +301,19 @@ const SearchParams = Type.Object(
     max_results: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
   },
   { additionalProperties: false }
+);
+
+const AutumnFileReturnParams = Type.Object(
+  { path: Type.String({ minLength: 1, maxLength: 4096 }) },
+  { additionalProperties: false },
+);
+
+const AutumnCompanionArtifactParams = Type.Object(
+  {
+    filename: Type.String({ minLength: 1, maxLength: 180 }),
+    content: Type.String({ minLength: 1, maxLength: 48000 }),
+  },
+  { additionalProperties: false },
 );
 
 // Program schemas (Phase 3A-3):
@@ -460,6 +536,48 @@ export async function execAutumnNodes(params, _config, deps) {
   }
   const node = safeNode(out.payload);
   return node ? okResult({ status: "OK", node }) : queryFailedResult();
+}
+
+export async function execAutumnFileReturn(params, _config, deps) {
+  if (!params || typeof params.path !== "string" || Object.keys(params).length !== 1) {
+    return failResult("invalid_path");
+  }
+  const out = await callBridgeFileReturn(params.path, deps || {});
+  if (!out.ok) {
+    return failResult(out.bridgeError || "file_return_failed", { bridgeMessage: out.bridgeMessage });
+  }
+  const payload = out.payload || {};
+  if (payload.status !== "succeeded" || typeof payload.transfer_id !== "string") {
+    return failResult("file_return_invalid");
+  }
+  return okResult({
+    status: "ready",
+    transfer_id: payload.transfer_id,
+    filename: typeof payload.filename === "string" ? payload.filename : "returned-file",
+    size: typeof payload.size === "number" ? payload.size : null,
+    message: "The file is ready for the current Autumn Companion reply and also Activity → Files. Do not expose Pi local paths or send it to Feishu unless explicitly requested.",
+  });
+}
+
+export async function execAutumnCompanionArtifact(params, _config, deps) {
+  if (!params || typeof params.filename !== "string" || typeof params.content !== "string" || Object.keys(params).length !== 2) {
+    return failResult("artifact_invalid");
+  }
+  const out = await callBridgeCompanionArtifact(params.filename, params.content, deps || {});
+  if (!out.ok) {
+    return failResult(out.bridgeError || "artifact_publish_failed", { bridgeMessage: out.bridgeMessage });
+  }
+  const payload = out.payload || {};
+  if (payload.status !== "succeeded" || typeof payload.transfer_id !== "string") {
+    return failResult("artifact_publish_invalid");
+  }
+  return okResult({
+    status: "ready",
+    transfer_id: payload.transfer_id,
+    filename: typeof payload.filename === "string" ? payload.filename : params.filename,
+    size: typeof payload.size === "number" ? payload.size : Buffer.byteLength(params.content, "utf8"),
+    message: "The generated text file is ready as an Autumn Companion attachment/download. No ad-hoc HTTP server or Feishu send is needed.",
+  });
 }
 
 // Strip internal-only fields so they never reach user-visible output.
@@ -996,12 +1114,13 @@ export async function execWorkerResume(_params, _config, deps) {
 }
 
 const PLUGIN_DESCRIPTION =
-  "OpenClaw Autumn tool plugin — sixteen existing Bridge-backed tools plus one read-only Node Registry tool. " +
+  "OpenClaw Autumn tool plugin — existing Bridge-backed tools, Node Registry, and Companion file return/artifact publishing. " +
   "Seven legacy probes + two program tools preserved from Phase 3A-3. " +
   "Four Phase 2B-3B R1 worker tools: submit, status, cancel, result. " +
   "Two Phase 2B-4E2 authorization tools: authorization_request, authorization_approve. " +
   "Three Phase 2B-5B worker control tools: control_status, emergency_stop, resume. " +
   "autumn_nodes observes only the current Pi Node Registry; capability never grants authorization. " +
+  "autumn_file_return returns one explicitly requested Windows file to Companion; autumn_companion_artifact creates a generated text artifact directly in the same Companion transfer store. " +
   "Worker operations: archive.list, archive.create (backend=direct) + R1 General ProcessJobSpec (type=process, catalog executables) + Codex (backend=codex).";
 
 export default definePluginEntry({
@@ -1022,6 +1141,34 @@ export default definePluginEntry({
       parameters: AutumnNodesParams,
       execute: async (toolCallId, _p, signal, onUpdate) =>
         await execAutumnNodes(_p, cfg, cfg),
+    });
+
+    api.registerTool({
+      name: "autumn_file_return",
+      label: "Return selected Windows file now",
+      description:
+        "Return one exact Windows file to the user's Autumn Companion download area. " +
+        "For a request originating from an Autumn Companion/PWA session, this is the DEFAULT file-return transport: when the user explicitly selects an exact Windows path (or one unambiguous search result) and says send/return/download it, call this tool in the SAME TURN. " +
+        "Do NOT switch to legacy Feishu/lark-file-sender merely because the user says 'send it to me'; use Feishu only when the user explicitly asks to send it to Feishu. " +
+        "Do not merely acknowledge the request and do not claim the file is ready unless this tool returns status=ready. " +
+        "Read-only on Windows: no delete, rename, move, shell, or arbitrary directory export. " +
+        "The Runner still enforces the existing file export path and size policy.",
+      parameters: AutumnFileReturnParams,
+      execute: async (toolCallId, _p, signal, onUpdate) =>
+        await execAutumnFileReturn(_p, cfg, cfg),
+    });
+
+    api.registerTool({
+      name: "autumn_companion_artifact",
+      label: "Create a generated text file for this Companion chat",
+      description:
+        "Create one text/code/Markdown artifact directly in Autumn Companion's transfer store and make it downloadable in the current Companion turn. " +
+        "Use this when the user asks you to turn content you generated into a file and send it HERE/current Companion chat. " +
+        "Pass filename + complete text content; do not first write a Pi temp file, do not start an HTTP server, and do not send to Feishu unless the user explicitly asks for Feishu. " +
+        "This tool cannot read arbitrary Pi files and cannot delete anything. It only creates a bounded text artifact.",
+      parameters: AutumnCompanionArtifactParams,
+      execute: async (toolCallId, _p, signal, onUpdate) =>
+        await execAutumnCompanionArtifact(_p, cfg, cfg),
     });
 
     // Five legacy tools

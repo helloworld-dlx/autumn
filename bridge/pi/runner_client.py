@@ -36,7 +36,7 @@ def call_runner(r,c):
 # Phase 2B-3B R2: Job API uses same signed envelope family as legacy /v1/task.
 # action field = "jobs.submit" | "jobs.status" | "jobs.result" | "jobs.cancel"
 # arguments field = Runner R1 ProcessJobSpec (or archive compatibility payload).
-JOB_ACTIONS=("submit","status","cancel","result")
+JOB_ACTIONS=("submit","status","cancel","result","list")
 def _canonical_job_payload(r):
  return json.dumps({k:v for k,v in r.items() if k!="signature"},ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()
 def build_signed_job_request(job_action,job_payload,c,key):
@@ -82,6 +82,8 @@ def cancel_job(job_id,c,key):
  r=build_signed_job_request("cancel",{"job_id":job_id},c,key);return call_runner_job(r,c)
 def job_result(job_id,c,key):
  r=build_signed_job_request("result",{"job_id":job_id},c,key);return call_runner_job(r,c)
+def job_list(limit,c,key):
+ r=build_signed_job_request("list",{"limit":limit},c,key);return call_runner_job(r,c)
 
 # --- Authorization API (Phase 2B-4E2) ---
 # Stateless passthrough to Runner. No local state, no auto-approve.
@@ -90,7 +92,7 @@ def job_result(job_id,c,key):
 #   POST /v1/authorizations/request  (body: action="authorizations.request", arguments={task, real_workspace})
 #   POST /v1/authorizations/approve  (body: action="authorizations.approve", arguments={authorization_request_id})
 
-AUTH_ACTIONS = ("request", "approve")
+AUTH_ACTIONS = ("request", "approve", "list")
 
 def _canonical_auth_payload(r):
  return json.dumps({k:v for k,v in r.items() if k!="signature"},ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()
@@ -139,6 +141,10 @@ def authorization_request(task, real_workspace, c, key):
 
 def authorization_approve(authorization_request_id, c, key):
  r = build_signed_auth_request("approve", {"authorization_request_id": authorization_request_id}, c, key)
+ return call_runner_auth(r, c)
+
+def authorization_list(c, key):
+ r = build_signed_auth_request("list", {}, c, key)
  return call_runner_auth(r, c)
 
 # --- Worker Control API (Phase 2B-5B) ---

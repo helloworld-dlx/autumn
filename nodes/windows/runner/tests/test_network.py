@@ -215,6 +215,30 @@ class NetworkTests(unittest.TestCase):
         legacy = self.call("POST", "/v1/task", json.dumps(self.signed()).encode(), {"Content-Type": "application/json"})
         self.assertEqual((legacy[0], legacy[1]["action"], legacy[1]["status"]), (200, "system.ping", "success"))
 
+    def test_companion_read_models_jobs_and_pending_authorizations_without_streams_or_full_paths(self):
+        def signed_call(route, action, arguments):
+            request = self.signed(action=action, arguments=arguments, nonce=f"activity-{uuid.uuid4().hex}")
+            return self.call("POST", route, json.dumps(request).encode(), {"Content-Type":"application/json"})
+
+        one = self.server.job_store.create("direct", "git")
+        status, jobs, _ = signed_call("/v1/jobs/list", "jobs.list", {"limit": 20})
+        self.assertEqual(status, 200)
+        rows = jobs["output"]["jobs"]
+        self.assertTrue(any(row["job_id"] == one.job_id for row in rows))
+        self.assertFalse(any("stdout" in row or "stderr" in row for row in rows))
+
+        (self.root / "project").mkdir()
+        pending = self.server.authorizations.create_request(
+            subject="runner-local-v1", adapter="codex", real_workspace=self.root / "project",
+            task_summary="update project", network_policy="none",
+        )
+        status, approvals, _ = signed_call("/v1/authorizations/list", "authorizations.list", {})
+        self.assertEqual(status, 200)
+        row = approvals["output"]["authorizations"][0]
+        self.assertEqual(row["authorization_request_id"], pending.authorization_request_id)
+        self.assertEqual(row["workspace"], "project")
+        self.assertNotIn("real_workspace", row)
+
     def test_direct_process_streams_exit_code_empty_and_truncation_reach_jobs_result(self):
         helper = Path(__file__).parent / "helpers" / "worker_probe.py"
         preamble = ("-I", "-B", str(helper))
