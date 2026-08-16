@@ -19,6 +19,6 @@ Quick Voice and Continuous Voice share the existing SiliconFlow STT to Autumn ag
 
 ## V0.3 Entry Boundary
 
-`READY_FOR_AUTUMN_V0_3 = YES`. V0.3 Phase 3B Companion Presence is **PASS / CLOSED / FROZEN** (2026-08-16): exact Conversation continuation, current-chat Windows file return, bounded generated artifacts, PWA shell v6, and main memory index recovery are accepted. The known Xiaomi Tailscale handoff diagnostic remains non-blocking and deferred; it is not silently reclassified as PASS.
+`READY_FOR_AUTUMN_V0_3 = YES`. `READY_FOR_PHASE3C = YES`. V0.3 Phase 3B Companion Presence and `PHASE3B_POSTFREEZE_UI_PATCH` are **PASS / CLOSED / FROZEN** (2026-08-16): exact Conversation continuation, current-chat Windows file return, bounded generated artifacts, viewport-contained Chat scrolling, Home Node status alignment, Auto/System dynamic theme, PWA shell v7, and main memory index recovery are accepted. The known Xiaomi Tailscale handoff diagnostic remains non-blocking and deferred; it is not silently reclassified as PASS.
 
-Do not start Phase 3C. Any OpenCode Worker or Complexity Gate work requires a new, explicit scope and acceptance plan. The V0.2 and frozen Phase 3B contracts must remain unchanged unless separately authorized.
+Phase 3C is not started by this patch. Any OpenCode Worker or Complexity Gate work requires a new, explicit scope and acceptance plan. The V0.2 and frozen Phase 3B contracts must remain unchanged unless separately authorized.

@@ -37,4 +37,14 @@ assert.match(source, /newConversation/, "Chat and Talk mark only explicit newly-
 assert.match(source, /replyAttachments/, "assistant-returned files are surfaced in the current Chat turn");
 assert.match(source, /attachment\.transferId\?' downloadable'/, "returned assistant attachments render as download cards");
 
+
+assert.match(source, /body\.chat-page-open #page-chat \.chat-messages\{[^}]*overflow-y:auto;overscroll-behavior:contain/, "Chat uses an internal message scroller instead of growing the whole page");
+assert.match(source, /document\.body\.classList\.toggle\('chat-page-open',page==='chat'\)/, "page navigation locks document scrolling only while Chat is active");
+assert.match(source, /\.node-list \.status-badge\{width:64px;min-width:64px/, "Home node state badges share one aligned width");
+assert.match(source, /function nextAutoBoundary\(now=new Date\(\)\)/, "Auto theme schedules the next 07:00/17:00/20:00 boundary without polling");
+assert.match(source, /setTimeout\(\(\)=>applyTheme\('auto',\{persist:false\}\),delay\)/, "Auto theme re-resolves at the next boundary");
+assert.match(source, /refreshDynamicTheme\(\);touchPresence\(\);probeAutumn\(\)/, "returning to the PWA refreshes the time-based theme");
+assert.match(source, /'Auto · '\+actual/, "Auto exposes its resolved visual theme for debugging");
+assert.match(source, /interactive-widget=resizes-content/, "mobile keyboard can resize the Chat viewport instead of covering the composer");
+
 console.log("Chat composer and Main history regression: PASS");

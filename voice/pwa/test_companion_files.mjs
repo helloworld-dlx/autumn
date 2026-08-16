@@ -18,7 +18,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-assert.match(worker, /autumn-companion-shell-v6/);
+assert.match(worker, /autumn-companion-shell-v7/);
 
 assert.match(html, /device-state/);
 assert.match(html, /device surface device-/);

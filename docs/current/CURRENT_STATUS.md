@@ -22,6 +22,7 @@
 **PHASE3B-4:** PASS / CLOSED — current-chat Windows file return and bounded generated text artifacts appear as durable Companion attachments and Activity → Files downloads; no Feishu, temporary HTTP, or LAN fallback.
 **PHASE3B-5:** PASS / CLOSED — `memory_search` rebuilt only main's missing index identity with Gateway stopped, then returned to valid FTS-only operation; no provider, database, or other-agent change.
 **PHASE3B:** PASS / CLOSED / FROZEN — Companion presence final acceptance complete. `PHASE3B-0B2` remains a separate non-blocking Tailscale handoff diagnostic, not a reopened V0.3 scope.
+**PHASE3B_POSTFREEZE_UI_PATCH:** PASS / CLOSED — Chat viewport-contained scrolling, Home Node status alignment, Auto/System dynamic theme, and PWA shell v7.
 
 ## Current Product Truth
 
@@ -39,7 +40,7 @@
 | Headless Runner | PASS / FROZEN；single `100.84.13.42:27891` listener；hidden startup chain |
 | Router Lite | PASS / FROZEN；One Autumn UX；无独立 Router service |
 | Portable Voice / Phase 2C | PASS / CLOSED / FROZEN；Quick + Continuous，共用既有 Gateway、Fast Mode、STT/TTS 链路；无硬 turn limit |
-| Companion Presence / Phase 3B | PASS / CLOSED / FROZEN；exact Conversation continuity、current-chat attachments、bounded generated artifacts、Activity Files、PWA shell v6 与 main memory index 已生产验收 |
+| Companion Presence / Phase 3B | PASS / CLOSED / FROZEN；exact Conversation continuity、current-chat attachments、bounded generated artifacts、Activity Files、PWA shell v7 与 main memory index 已生产验收 |
 | Python / Node | AUTHORIZATION_REQUIRED；production execution authorization path incomplete，不承诺确认后执行 |
 | OpenCode Worker | DEFERRED TO V0.3 — APPROVED SCOPE CHANGE；不是 PASS/不是 blocker |
 | Complexity Gate | DEFERRED；不是 PASS |
@@ -62,6 +63,6 @@
 - OpenCode Worker: DEFERRED TO V0.3 BY APPROVED SCOPE CHANGE.
 - Complexity Gate: DEFERRED.
 - `open_app`: deferred P1/later; natural barge-in, realtime Voice runtime and Voice + Eyes fusion: V0.3; Wake Word and Ambient Mic: not V0.2.
-- V0.3 Phase 3B is frozen. Do not begin Phase 3C without a new explicit scope.
+- V0.3 Phase 3B and its approved post-freeze UI patch are frozen. Phase 3C is ready but not started.
 
 Canonical release record: `AUTUMN_V0_2_FINAL_ACCEPTANCE.md`.
