@@ -29,5 +29,5 @@ test('Companion shell keeps health probes on foreground events without a Tailsca
 test('Voice fails fast while Autumn is disconnected', () => {
   assert.match(html, /Autumn is disconnected\. Connect first\./);
   assert.match(html, /if\(connectivityState!==\'CONNECTED\'\)\{show\('连接'/);
-  assert.match(html, /if\(connectivityState!==\'CONNECTED\'\)\{fail\('Autumn is disconnected\. Connect first\.'/);
+  assert.match(html, /if\(connectivityState!==\'CONNECTED\'\)\{failForContext\(ctx,'Autumn is disconnected\. Connect first\.'/);
 });

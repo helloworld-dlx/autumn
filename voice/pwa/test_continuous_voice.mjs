@@ -52,3 +52,22 @@ test('Quick and Continuous runtime IDs map to the same Main conversation', () =>
   assert.equal(quickSecond.conversationId, 'main');
   assert.equal(continuous.conversationId, 'main');
 });
+
+test('stop invalidates an in-flight generation claim', () => {
+  const session = new ContinuousVoiceSession('runtime-claim', 'main');
+  session.start();
+  const claim = session.processing();
+  assert.equal(session.isCurrent(claim), true);
+  session.stop();
+  assert.equal(session.isCurrent(claim), false);
+});
+
+test('a newer turn invalidates the previous turn claim', () => {
+  const session = new ContinuousVoiceSession('runtime-newer', 'main');
+  session.start();
+  const first = session.processing();
+  session.state = 'LISTENING';
+  const second = session.processing();
+  assert.equal(session.isCurrent(first), false);
+  assert.equal(session.isCurrent(second), true);
+});

@@ -52,6 +52,26 @@ function finish(runId, result) {
   item.resolve(result);
 }
 
+function emitDelta(item, text) {
+  if (!item?.onDelta || !text) return;
+  let delta = "";
+  if (!item.lastText) {
+    delta = text;
+    item.lastText = text;
+  } else if (text.startsWith(item.lastText)) {
+    delta = text.slice(item.lastText.length);
+    item.lastText = text;
+  } else if (item.lastText.endsWith(text) || item.lastText === text) {
+    return;
+  } else {
+    // Some Gateway builds emit incremental chunks while others emit the
+    // accumulated assistant text. Preserve both without changing session flow.
+    delta = text;
+    item.lastText += text;
+  }
+  if (delta) item.onDelta(delta, item.lastText);
+}
+
 function handleEvent(event, payload) {
   if (event !== "chat" || !payload || typeof payload !== "object") return;
   const runId = payload.runId;
@@ -64,7 +84,9 @@ function handleEvent(event, payload) {
     finish(runId, { ok: false, error: "GATEWAY_SESSION_MISMATCH" });
     return;
   }
-  if (payload.state === "final") {
+  if (payload.state === "delta") {
+    emitDelta(item, visibleText(payload.message));
+  } else if (payload.state === "final") {
     const text = visibleText(payload.message);
     finish(runId, text ? { ok: true, text } : { ok: false, error: "AUTUMN_REPLY_INVALID" });
   } else if (payload.state === "error" || payload.state === "aborted") {
@@ -72,14 +94,14 @@ function handleEvent(event, payload) {
   }
 }
 
-async function sendAndWait(sessionKey, message, fastMode, attachments = []) {
+async function sendAndWait(sessionKey, message, fastMode, attachments = [], onDelta = null) {
   const runId = randomUUID();
   return await new Promise((resolve) => {
     const timer = setTimeout(
       () => finish(runId, { ok: false, error: "GATEWAY_TURN_TIMEOUT" }),
       130_000,
     );
-    pending.set(runId, { resolve, timer, sessionKey });
+    pending.set(runId, { resolve, timer, sessionKey, onDelta, lastText: "" });
     client.request("chat.send", {
       sessionKey,
       agentId: "main",
@@ -240,8 +262,19 @@ for await (const line of lines) {
     const attachments = request.source === "chat" && Array.isArray(request.attachments) ? request.attachments : [];
     const startedAt = Date.now();
     const canonicalSessionKey = `agent:main:${request.sessionKey}`;
-    const result = await sendAndWait(canonicalSessionKey, request.message, request.source === "voice", attachments);
-    process.stdout.write(`${JSON.stringify({ ...result, latencyMs: Date.now() - startedAt })}\n`);
+    const stream = request.source === "voice" && request.stream === true;
+    const requestId = typeof request.requestId === "string" && request.requestId ? request.requestId : randomUUID();
+    const result = await sendAndWait(
+      canonicalSessionKey,
+      request.message,
+      request.source === "voice",
+      attachments,
+      stream ? (delta, text) => {
+        process.stdout.write(`${JSON.stringify({ type: "delta", requestId, delta, text })}\n`);
+      } : null,
+    );
+    const payload = { ...result, latencyMs: Date.now() - startedAt };
+    process.stdout.write(`${JSON.stringify(stream ? { type: "final", requestId, ...payload } : payload)}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({
       ok: false,

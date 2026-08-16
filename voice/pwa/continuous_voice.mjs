@@ -6,35 +6,59 @@ export class ContinuousVoiceSession {
     this.running = false;
     this.state = 'OFF';
     this.turn = 0;
+    this.generation = 0;
   }
 
   start() {
     this.running = true;
     this.state = 'LISTENING';
+    this.generation += 1;
+    return this.claim();
   }
 
   processing() {
-    if (!this.running) return;
+    if (!this.running) return null;
     this.turn += 1;
+    this.generation += 1;
     this.state = 'PROCESSING';
+    return this.claim();
   }
 
-  speaking() {
-    if (this.running) this.state = 'SPEAKING';
+  speaking(claim = null) {
+    if (this.running && (!claim || this.isCurrent(claim))) this.state = 'SPEAKING';
   }
 
-  playbackEnded() {
+  playbackEnded(claim = null) {
+    if (claim && !this.isCurrent(claim)) return;
     if (this.mode === 'quick') this.stop();
     else this.state = this.running ? 'LISTENING' : 'OFF';
   }
 
   stop() {
+    this.generation += 1;
     this.running = false;
     this.state = 'OFF';
   }
 
   idleExpired() {
     this.stop();
+  }
+
+  claim() {
+    return {
+      runtimeId: this.runtimeId,
+      turn: this.turn,
+      generation: this.generation,
+    };
+  }
+
+  isCurrent(claim) {
+    return Boolean(
+      this.running &&
+      claim &&
+      claim.runtimeId === this.runtimeId &&
+      claim.generation === this.generation
+    );
   }
 
   shouldListen() {

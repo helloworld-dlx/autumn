@@ -130,6 +130,45 @@ class GatewayTurnClient:
             raise RuntimeError(str(result.get("error") or "Gateway returned no reply"))
         return result["text"].strip()
 
+    def turn_stream(self, message: str, voice_key: str, on_delta, source: str = "voice") -> str:
+        request_id = uuid.uuid4().hex
+        callback_error: Exception | None = None
+        with self.lock:
+            process = self._start()
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("Gateway helper pipes unavailable")
+            process.stdin.write(json.dumps({
+                "message": message,
+                "sessionKey": voice_key,
+                "source": source,
+                "stream": True,
+                "requestId": request_id,
+            }, ensure_ascii=False) + "\n")
+            process.stdin.flush()
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    self.process = None
+                    raise RuntimeError("Gateway helper stopped")
+                event = json.loads(line)
+                if event.get("requestId") not in {None, request_id}:
+                    continue
+                if event.get("type") == "delta":
+                    if callback_error is None:
+                        try:
+                            on_delta(str(event.get("delta") or ""), str(event.get("text") or ""))
+                        except Exception as exc:  # Drain this serialized Gateway turn before surfacing the callback failure.
+                            callback_error = exc
+                    continue
+                if event.get("type") == "final" or event.get("type") is None:
+                    result = event
+                    break
+        if callback_error is not None:
+            raise callback_error
+        if not result.get("ok") or not isinstance(result.get("text"), str) or not result["text"].strip():
+            raise RuntimeError(str(result.get("error") or "Gateway returned no reply"))
+        return result["text"].strip()
+
     def history(self, voice_key: str) -> list[dict[str, str]]:
         with self.lock:
             process = self._start()
@@ -174,6 +213,15 @@ def autumn_turn(transcript: str, voice_key: str, gateway: GatewayTurnClient = GA
         return gateway.turn(transcript, voice_key, source, attachments)
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         raise BridgeError("GATEWAY_FAILED", "Autumn Gateway turn failed", 502) from exc
+
+
+def autumn_turn_stream(transcript: str, voice_key: str, on_delta, gateway: GatewayTurnClient = GATEWAY) -> str:
+    try:
+        return gateway.turn_stream(transcript, voice_key, on_delta, "voice")
+    except BridgeError:
+        raise
+    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+        raise BridgeError("GATEWAY_FAILED", "Autumn Gateway streaming turn failed", 502) from exc
 
 
 def multipart_body(audio: bytes, filename: str, content_type: str) -> tuple[bytes, str]:
@@ -229,6 +277,40 @@ fs.writeFileSync(output, audio, { mode: 0o600 });
     if not output.is_file() or output.stat().st_size == 0:
         raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax returned no audio")
     return output
+
+
+def register_audio(path: Path) -> str:
+    token = uuid.uuid4().hex
+    AUDIOS[token] = (path, time.monotonic())
+    cleanup_audio()
+    return f"/api/audio/{token}"
+
+
+def first_speakable_prefix(text: str) -> tuple[str, int] | None:
+    """Return one natural early TTS prefix and the exact consumed character count.
+
+    3C-1 intentionally synthesizes at most one early prefix before the final
+    reply. This cuts first-voice latency without creating a large TTS queue yet.
+    """
+    if not isinstance(text, str) or not text:
+        return None
+    leading = len(text) - len(text.lstrip())
+    body = text[leading:]
+    if len(body) < 6:
+        return None
+    for match in re.finditer(r'[。！？!?][”’"\']?', body):
+        end = match.end()
+        if end >= 6:
+            return body[:end].strip(), leading + end
+    if len(body) >= 20:
+        window = body[:36]
+        soft = max((window.rfind(mark) for mark in ("，", ",", "；", ";", "：", ":")), default=-1)
+        if soft >= 12:
+            end = soft + 1
+            return body[:end].strip(), leading + end
+    if len(body) >= 36:
+        return body[:36].strip(), leading + 36
+    return None
 
 
 def cleanup_audio() -> None:
@@ -391,18 +473,127 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_conversation:
     autumn_ms = round((time.monotonic() - started) * 1000) - stt_ms
     path = tts(reply)
     total_ms = round((time.monotonic() - started) * 1000)
-    token = uuid.uuid4().hex
-    AUDIOS[token] = (path, time.monotonic())
-    cleanup_audio()
+    audio_url = register_audio(path)
     return {
         "conversationKey": key,
         "transcript": transcript,
         "reply": reply,
         "replyAttachments": _safe_attachment_metadata(reply_attachments),
-        "audioUrl": f"/api/audio/{token}",
+        "audioUrl": audio_url,
         "latencyMs": {"stt": stt_ms, "autumn": autumn_ms, "tts": total_ms - stt_ms - autumn_ms, "total": total_ms},
     }
 
+
+
+def process_turn_stream(audio: bytes, filename: str, mime: str, requested_conversation: str | None, emit,
+                        stt=siliconflow_transcribe, autumn_stream=autumn_turn_stream, tts=minimax_tts,
+                        title_path: Path = CONVERSATION_TITLES_PATH, new_conversation: bool = False,
+                        history=GATEWAY.history, metadata_path: Path = ATTACHMENT_META_PATH,
+                        transfer_root: Path = TRANSFER_ROOT) -> dict[str, object]:
+    if not audio:
+        raise BridgeError("AUDIO_REQUIRED", "Upload one audio utterance", 400)
+    if len(audio) > MAX_AUDIO_BYTES:
+        raise BridgeError("AUDIO_TOO_LARGE", "Audio exceeds 20 MiB", 413)
+
+    started = time.monotonic()
+    transcript = stt(audio, filename, mime)
+    stt_done = time.monotonic()
+    stt_ms = round((stt_done - started) * 1000)
+    key = conversation_key(requested_conversation)
+    emit({"type": "meta", "conversationKey": key, "transcript": transcript, "latencyMs": {"stt": stt_ms}})
+
+    before_transfers = _returned_transfer_ids(transfer_root)
+    streamed = ""
+    first_text_ms: int | None = None
+    first_voice_ms: int | None = None
+    first_consumed = 0
+    first_chunk = ""
+    early_tts_error: BridgeError | None = None
+
+    def on_delta(delta: str, accumulated: str) -> None:
+        nonlocal streamed, first_text_ms, first_voice_ms, first_consumed, first_chunk, early_tts_error
+        streamed = accumulated or (streamed + delta)
+        if first_text_ms is None and streamed.strip():
+            first_text_ms = round((time.monotonic() - stt_done) * 1000)
+        if streamed:
+            emit({"type": "text", "text": streamed, "latencyMs": {"firstText": first_text_ms}})
+        if first_consumed or early_tts_error is not None:
+            return
+        candidate = first_speakable_prefix(streamed)
+        if not candidate:
+            return
+        chunk, consumed = candidate
+        if not chunk:
+            return
+        try:
+            path = tts(chunk)
+            audio_url = register_audio(path)
+        except BridgeError as exc:
+            early_tts_error = exc
+            return
+        first_chunk = chunk
+        first_consumed = consumed
+        first_voice_ms = round((time.monotonic() - started) * 1000)
+        emit({
+            "type": "audio",
+            "seq": 0,
+            "text": chunk,
+            "audioUrl": audio_url,
+            "latencyMs": {"firstText": first_text_ms, "firstVoice": first_voice_ms},
+        })
+
+    reply = autumn_stream(transcript, key, on_delta)
+    final_observed = time.monotonic()
+    if early_tts_error is not None:
+        raise early_tts_error
+
+    audio_seq = 1 if first_consumed else 0
+    remainder = reply[first_consumed:].strip() if first_consumed else reply
+    if remainder:
+        path = tts(remainder)
+        audio_url = register_audio(path)
+        if first_voice_ms is None:
+            first_voice_ms = round((time.monotonic() - started) * 1000)
+        emit({
+            "type": "audio",
+            "seq": audio_seq,
+            "text": remainder,
+            "audioUrl": audio_url,
+            "latencyMs": {"firstText": first_text_ms, "firstVoice": first_voice_ms},
+        })
+
+    reply_attachments = _new_returned_attachments(before_transfers, transfer_root)
+    if _should_create_first_turn_title(requested_conversation, new_conversation, title_path):
+        try:
+            ensure_conversation_title(key, transcript, title_path)
+        except (OSError, json.JSONDecodeError):
+            pass
+    if reply_attachments:
+        try:
+            rows = history(key)
+            assistant_id = _latest_assistant_message_id(rows)
+            if assistant_id:
+                store_attachment_metadata(key, assistant_id, reply_attachments, metadata_path)
+        except (OSError, RuntimeError, json.JSONDecodeError):
+            pass
+
+    total_ms = round((time.monotonic() - started) * 1000)
+    final_ms = round((final_observed - stt_done) * 1000)
+    result = {
+        "conversationKey": key,
+        "transcript": transcript,
+        "reply": reply,
+        "replyAttachments": _safe_attachment_metadata(reply_attachments),
+        "latencyMs": {
+            "stt": stt_ms,
+            "firstText": first_text_ms,
+            "firstVoice": first_voice_ms,
+            "finalObserved": final_ms,
+            "total": total_ms,
+        },
+    }
+    emit({"type": "final", **result})
+    return result
 
 
 def _safe_attachment_metadata(attachments: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -922,6 +1113,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status); self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(data)
 
+    def begin_ndjson(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        def emit(payload: dict[str, object]) -> None:
+            data = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+            self.wfile.write(data)
+            self.wfile.flush()
+        return emit
+
     def do_GET(self) -> None:
         if self.path == "/health":
             self.send_json(200, {"ok": True, "listen": "loopback"})
@@ -1027,6 +1233,37 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(exc.status, {"error": exc.code, "message": exc.message})
             except Exception:
                 self.send_json(500, {"error": "INTERNAL_ERROR", "message": "Chat failed"})
+            return
+        if self.path == "/api/turn-stream":
+            emit = None
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_AUDIO_BYTES + 65536:
+                    raise BridgeError("AUDIO_TOO_LARGE", "Audio exceeds 20 MiB", 413)
+                audio, name, mime, requested, new_conversation = parse_multipart(
+                    self.headers.get("Content-Type", ""), self.rfile.read(length)
+                )
+                emit = self.begin_ndjson()
+                process_turn_stream(audio, name, mime, requested, emit, new_conversation=new_conversation)
+                touch_phone_presence()
+            except BridgeError as exc:
+                if emit is None:
+                    self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+                else:
+                    try:
+                        emit({"type": "error", "error": exc.code, "message": exc.message})
+                    except OSError:
+                        pass
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception:
+                if emit is None:
+                    self.send_json(500, {"error": "INTERNAL_ERROR", "message": "Voice Bridge failed"})
+                else:
+                    try:
+                        emit({"type": "error", "error": "INTERNAL_ERROR", "message": "Voice Bridge failed"})
+                    except OSError:
+                        pass
             return
         if self.path != "/api/turn": self.send_error(404); return
         try:

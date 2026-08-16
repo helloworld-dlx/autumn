@@ -5,6 +5,44 @@ sys.path.insert(0, str(Path(__file__).parent))
 import voice_bridge as bridge
 
 class VoiceBridgeTests(unittest.TestCase):
+
+    def test_first_speakable_prefix_prefers_natural_sentence_boundary(self):
+        chunk = bridge.first_speakable_prefix("我觉得可以先这样做。后面再继续解释。")
+        self.assertEqual(chunk, ("我觉得可以先这样做。", len("我觉得可以先这样做。")))
+
+    def test_streaming_turn_emits_early_audio_and_final_without_new_session(self):
+        events = []
+        spoken = []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "transfers"
+            root.mkdir()
+            media = Path(temp) / "speech.mp3"
+            media.write_bytes(b"audio")
+
+            def autumn_stream(text, key, on_delta):
+                self.assertEqual(text, "请解释流水线")
+                self.assertEqual(key, "companion:main")
+                on_delta("流水线 CPU 可以同时处理多条指令。", "流水线 CPU 可以同时处理多条指令。")
+                on_delta("后续阶段会继续并行推进。", "流水线 CPU 可以同时处理多条指令。后续阶段会继续并行推进。")
+                return "流水线 CPU 可以同时处理多条指令。后续阶段会继续并行推进。"
+
+            def tts(text):
+                spoken.append(text)
+                return media
+
+            result = bridge.process_turn_stream(
+                b"a", "a.webm", "audio/webm", "main", events.append,
+                stt=lambda *_: "请解释流水线",
+                autumn_stream=autumn_stream,
+                tts=tts,
+                transfer_root=root,
+            )
+        self.assertEqual(result["conversationKey"], "companion:main")
+        self.assertTrue(any(event.get("type") == "audio" and event.get("seq") == 0 for event in events))
+        self.assertEqual(events[-1]["type"], "final")
+        self.assertEqual("".join(spoken), result["reply"])
+        self.assertNotIn("voice:", repr(events))
+
     def test_loopback_only(self):
         bridge.assert_loopback("127.0.0.1")
         with self.assertRaises(ValueError): bridge.assert_loopback("0.0.0.0")
