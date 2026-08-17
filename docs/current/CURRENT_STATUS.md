@@ -1,6 +1,6 @@
 # Autumn V0.2 · One Autumn — Current Status
 
-**As of:** 2026-08-16
+**As of:** 2026-08-17
 **AUTUMN_V0_2_ONE_AUTUMN:** PASS / CLOSED / FROZEN  
 **PHASE2B:** PASS / CLOSED / FROZEN  
 **PHASE2C:** PASS / CLOSED / FROZEN  
@@ -24,6 +24,8 @@
 **PHASE3B:** PASS / CLOSED / FROZEN — Companion presence final acceptance complete. `PHASE3B-0B2` remains a separate non-blocking Tailscale handoff diagnostic, not a reopened V0.3 scope.
 **PHASE3B_POSTFREEZE_UI_PATCH:** PASS / CLOSED — Chat viewport-contained scrolling, Home Node status alignment, Auto/System dynamic theme, and PWA shell v7.
 **PHASE3C-2:** PASS / CLOSED / FROZEN — Voice stability priority: one early speech prefix per turn, non-overlapping final remainder, streaming fallback retained, and Presence responses fail closed without reliable `autumn_nodes` evidence. Exact Companion session and Fast Mode preserved; no provider instrumentation, fast path, permission expansion, or performance claim added.
+**PHASE3C-3:** PASS / CLOSED / FROZEN — Natural Barge-in accepted for Continuous Voice: browser-side duck/interrupt, generation invalidation, playback queue clearing, and same Companion conversation continuation. Streaming text remains; aggressive Streaming TTS and latency optimization are optional future work, not final requirements. The MiniMax tool-selection / `autumn_nodes` issue is an independent Autumn Core Tool Selection task and does not block Voice closure.
+**PHASE3C:** PASS / CLOSED / FROZEN — Stability-first realtime Voice closure; Quick Voice, fallback, exact Companion session, Fast Mode, Stop, and existing service topology remain preserved.
 
 ## Current Product Truth
 
@@ -64,6 +66,7 @@
 - OpenCode Worker: DEFERRED TO V0.3 BY APPROVED SCOPE CHANGE.
 - Complexity Gate: DEFERRED.
 - `open_app`: deferred P1/later; natural barge-in, realtime Voice runtime and Voice + Eyes fusion: V0.3; Wake Word and Ambient Mic: not V0.2.
-- V0.3 Phase 3B and its approved post-freeze UI patch are frozen. Phase 3C-2 is PASS / CLOSED / FROZEN; Phase 3C-3 is not started.
+- V0.3 Phase 3B and its approved post-freeze UI patch are frozen. Phase 3C is PASS / CLOSED / FROZEN.
+- The `autumn_nodes` / MiniMax tool-selection issue is an independent Autumn Core Tool Selection backlog item, not a Phase 3C closure blocker. No Phase 3D or 3E work has started.
 
 Canonical release record: `AUTUMN_V0_2_FINAL_ACCEPTANCE.md`.

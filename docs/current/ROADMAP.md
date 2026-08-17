@@ -27,4 +27,12 @@ Quick Voice and Continuous Voice share the existing SiliconFlow STT to Autumn ag
 
 Stability-first Voice Bridge delivery: at most one early speech prefix per turn, final audio limited to a proven non-overlapping remainder, existing full-TTS fallback retained, and Presence assertions fail closed without reliable `autumn_nodes` evidence. Exact Companion conversation, Fast Mode, existing permissions, and frozen V0.2/3A/3B contracts remain unchanged. No latency number is claimed and no Presence fast path was added.
 
-Phase 3C-3 is not started. Any OpenCode Worker or Complexity Gate work requires a new, explicit scope and acceptance plan. The V0.2 and frozen Phase 3B contracts must remain unchanged unless separately authorized.
+### V0.3 Phase 3C-3 — Natural Barge-in
+
+**Status:** PASS / CLOSED / FROZEN
+
+Continuous Voice now supports stability-first browser-side Natural Barge-in: speaking activity ducks playback, confirmed sustained speech invalidates the current generation, clears old playback, and continues the next utterance in the same exact Companion conversation. Quick Voice remains single-turn. Stop, stale-generation protection, fallback, Fast Mode, and the existing service topology remain unchanged.
+
+Streaming text is retained. Aggressive Streaming TTS and further latency optimization are optional future work, not acceptance requirements. The MiniMax tool-selection / `autumn_nodes` issue is an independent Autumn Core Tool Selection backlog item and does not block Phase 3C Voice closure.
+
+Any OpenCode Worker, Complexity Gate, Phase 3D, or Phase 3E work requires a new, explicit scope and acceptance plan. The V0.2 and frozen Phase 3B contracts remain unchanged unless separately authorized.
