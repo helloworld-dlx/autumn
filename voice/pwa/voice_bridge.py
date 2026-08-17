@@ -1142,10 +1142,14 @@ def _validated_chat_attachments(value: object) -> list[dict[str, object]]:
         total += actual_size
         if total > MAX_CHAT_ATTACHMENT_TOTAL_BYTES:
             raise BridgeError("ATTACHMENTS_TOO_LARGE", "Attachments exceed 12 MiB total", 413)
+        normalized_mime = mime_type.strip().lower()
         result.append({
-            "type": "file",
+            # OpenClaw chat.send treats image attachments as media only when
+            # their declared type is image. Preserve regular file behavior for
+            # non-image Companion attachments.
+            "type": "image" if normalized_mime.startswith("image/") else "file",
             "fileName": file_name.strip(),
-            "mimeType": mime_type.strip().lower(),
+            "mimeType": normalized_mime,
             "content": content,
             "sizeBytes": actual_size,
         })
@@ -1407,6 +1411,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
         if self.path == "/barge_in.mjs":
             data = (ROOT / "barge_in.mjs").read_bytes()
+            self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
+        if self.path == "/eyes.mjs":
+            data = (ROOT / "eyes.mjs").read_bytes()
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
         if self.path == "/sw.js":
             data = (ROOT / "sw.js").read_bytes()

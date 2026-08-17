@@ -241,6 +241,23 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertIn('self.path == "/barge_in.mjs"', source)
         self.assertIn('"barge_in.mjs"', source)
 
+    def test_eyes_is_a_static_route(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn('self.path == "/eyes.mjs"', source)
+        self.assertIn('"eyes.mjs"', source)
+
+    def test_image_attachment_preserves_image_type_for_gateway(self):
+        raw = base64.b64encode(b"fake-jpeg").decode("ascii")
+        attachments = bridge._validated_chat_attachments([{
+            "type": "image",
+            "fileName": "eyes.jpg",
+            "mimeType": "image/jpeg",
+            "content": raw,
+            "sizeBytes": len(b"fake-jpeg"),
+        }])
+        self.assertEqual(attachments[0]["type"], "image")
+        self.assertEqual(attachments[0]["mimeType"], "image/jpeg")
+
     def test_afterglow_background_is_an_allowlisted_static_route(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
         self.assertIn('"/assets/afterglow-home.webp"', source)

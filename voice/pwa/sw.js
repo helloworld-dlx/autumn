@@ -1,9 +1,10 @@
-const CACHE_NAME = "autumn-companion-shell-v8";
+const CACHE_NAME = "autumn-companion-shell-v11";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/continuous_voice.mjs",
   "/barge_in.mjs",
+  "/eyes.mjs",
   "/manifest.webmanifest",
   "/icons/autumn-192.png",
   "/icons/autumn-512.png",
