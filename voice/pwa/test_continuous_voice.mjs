@@ -71,3 +71,29 @@ test('a newer turn invalidates the previous turn claim', () => {
   assert.equal(session.isCurrent(first), false);
   assert.equal(session.isCurrent(second), true);
 });
+
+
+test('continuous speaking permits barge-in monitoring without normal capture', () => {
+  const session = new ContinuousVoiceSession('runtime-barge', 'main', 'continuous');
+  session.start();
+  const oldClaim = session.processing();
+  session.speaking(oldClaim);
+  assert.equal(session.shouldListen(), false);
+  assert.equal(session.shouldMonitorBargeIn(), true);
+  const interruptClaim = session.interrupt();
+  assert.ok(interruptClaim);
+  assert.equal(session.state, 'LISTENING');
+  assert.equal(session.isCurrent(oldClaim), false);
+  assert.equal(session.isCurrent(interruptClaim), true);
+  assert.equal(session.conversationId, 'main');
+});
+
+test('quick mode does not open barge-in continuation', () => {
+  const session = new ContinuousVoiceSession('runtime-quick-barge', 'main', 'quick');
+  session.start();
+  const claim = session.processing();
+  session.speaking(claim);
+  assert.equal(session.shouldMonitorBargeIn(), false);
+  assert.equal(session.interrupt(), null);
+  assert.equal(session.state, 'SPEAKING');
+});

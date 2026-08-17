@@ -28,6 +28,17 @@ export class ContinuousVoiceSession {
     if (this.running && (!claim || this.isCurrent(claim))) this.state = 'SPEAKING';
   }
 
+  shouldMonitorBargeIn() {
+    return this.running && this.mode === 'continuous' && this.state === 'SPEAKING';
+  }
+
+  interrupt() {
+    if (!this.shouldMonitorBargeIn()) return null;
+    this.generation += 1;
+    this.state = 'LISTENING';
+    return this.claim();
+  }
+
   playbackEnded(claim = null) {
     if (claim && !this.isCurrent(claim)) return;
     if (this.mode === 'quick') this.stop();

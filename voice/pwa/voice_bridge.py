@@ -1405,6 +1405,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/continuous_voice.mjs":
             data = (ROOT / "continuous_voice.mjs").read_bytes()
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
+        if self.path == "/barge_in.mjs":
+            data = (ROOT / "barge_in.mjs").read_bytes()
+            self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
         if self.path == "/sw.js":
             data = (ROOT / "sw.js").read_bytes()
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return

@@ -18,7 +18,8 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-assert.match(worker, /autumn-companion-shell-v7/);
+assert.match(worker, /autumn-companion-shell-v8/);
+assert.match(worker, /\/barge_in\.mjs/);
 
 assert.match(html, /device-state/);
 assert.match(html, /device surface device-/);
