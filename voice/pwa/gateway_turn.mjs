@@ -17,6 +17,9 @@ const client = new GatewayClient({
   mode: "backend",
   role: "operator",
   scopes: ["operator.write"],
+  // OpenClaw only forwards agent tool lifecycle events to clients that request
+  // this read-only event capability. It does not change the agent's tool policy.
+  caps: ["tool-events"],
   platform: process.platform,
   minProtocol: 4,
   maxProtocol: 4,
@@ -49,7 +52,7 @@ function finish(runId, result) {
   if (!item) return;
   pending.delete(runId);
   clearTimeout(item.timer);
-  item.resolve(result);
+  item.resolve({ ...result, toolTrace: item.trace });
 }
 
 function emitDelta(item, text) {
@@ -72,7 +75,58 @@ function emitDelta(item, text) {
   if (delta) item.onDelta(delta, item.lastText);
 }
 
+function presenceResultSummary(value) {
+  const text = typeof value === "string"
+    ? value
+    : JSON.stringify(value ?? "");
+  const status = /\b(ONLINE|OFFLINE)\b/i.exec(text)?.[1]?.toUpperCase();
+  const node = /\bwindows-main\b/i.test(text) ? "windows-main" : undefined;
+  return {
+    kind: Array.isArray(value) ? "array" : typeof value,
+    ...(node ? { node } : {}),
+    ...(status ? { status } : {}),
+  };
+}
+
+function safeToolTrace(data, elapsedMs) {
+  if (!data || typeof data !== "object" || typeof data.name !== "string") return null;
+  const entry = { atMs: elapsedMs, phase: data.phase, tool: data.name };
+  if (data.name !== "autumn_nodes") return entry;
+  if (data.phase === "start" && data.args && typeof data.args === "object") {
+    const args = {};
+    if (typeof data.args.action === "string") args.action = data.args.action.slice(0, 40);
+    if (typeof data.args.node_id === "string") args.nodeId = data.args.node_id.slice(0, 80);
+    if (Object.keys(args).length) entry.args = args;
+  }
+  if (data.phase === "result") {
+    entry.result = presenceResultSummary(data.result);
+    if (data.isError === true) entry.error = true;
+  }
+  return entry;
+}
+
+function traceAgentEvent(payload) {
+  if (!payload || typeof payload !== "object") return;
+  const item = pending.get(payload.runId);
+  if (!item) return;
+  const elapsedMs = Date.now() - item.startedAt;
+  let entry = null;
+  if (payload.stream === "tool") entry = safeToolTrace(payload.data, elapsedMs);
+  else if (payload.stream === "assistant" && !item.firstAssistantEventMs) {
+    item.firstAssistantEventMs = elapsedMs;
+    entry = { atMs: elapsedMs, phase: item.lastToolResultMs ? "model_resume" : "first_model_event", stream: "assistant" };
+  }
+  if (!entry) return;
+  if (entry.phase === "result" && entry.tool === "autumn_nodes") item.lastToolResultMs = elapsedMs;
+  item.trace.push(entry);
+  if (item.onTrace) item.onTrace(entry);
+}
+
 function handleEvent(event, payload) {
+  if (event === "agent") {
+    traceAgentEvent(payload);
+    return;
+  }
   if (event !== "chat" || !payload || typeof payload !== "object") return;
   const runId = payload.runId;
   const item = pending.get(runId);
@@ -94,14 +148,14 @@ function handleEvent(event, payload) {
   }
 }
 
-async function sendAndWait(sessionKey, message, fastMode, attachments = [], onDelta = null) {
+async function sendAndWait(sessionKey, message, fastMode, attachments = [], onDelta = null, onTrace = null) {
   const runId = randomUUID();
   return await new Promise((resolve) => {
     const timer = setTimeout(
       () => finish(runId, { ok: false, error: "GATEWAY_TURN_TIMEOUT" }),
       130_000,
     );
-    pending.set(runId, { resolve, timer, sessionKey, onDelta, lastText: "" });
+    pending.set(runId, { resolve, timer, sessionKey, onDelta, onTrace, lastText: "", trace: [], startedAt: Date.now(), firstAssistantEventMs: null, lastToolResultMs: null });
     client.request("chat.send", {
       sessionKey,
       agentId: "main",

@@ -26,7 +26,7 @@ XIAOMI15 = {
     "capabilities": ["voice.listen", "voice.speak", "open_url", "clipboard.set"],
     "metadata": {},
 }
-PI_HEALTH_TTL = timedelta(seconds=90)
+PI_HEALTH_TTL = timedelta(seconds=90)  # retained for protocol compatibility; core presence is self-evident when served
 WINDOWS_HEALTH_TTL = timedelta(seconds=180)
 PHONE_RECENT_TTL = timedelta(minutes=10)
 MAX_PUBLIC_NODES = 16
@@ -76,7 +76,10 @@ class NodeRegistry:
   return {"protocol_version":node["protocol_version"],"node_id":node["node_id"],"node_type":node["node_type"],"node_version":node["node_version"],"online":self.derive_presence(node["node_type"],last_seen),"last_seen":last_seen.isoformat().replace("+00:00","Z"),"capabilities":list(node["capabilities"]),"metadata":dict(node["metadata"])}
  def derive_presence(self,node_type,last_seen):
   if last_seen is None:return "UNKNOWN"
+  # The registry itself is hosted by pi5-core. If callers can read this
+  # registry, the core node is necessarily reachable; do not let an unrelated
+  # probe-loop timestamp make the Pi report itself OFFLINE.
+  if node_type=="core":return "ONLINE"
   age=self._clock()-last_seen
   if node_type=="phone":return "RECENT" if age<=PHONE_RECENT_TTL else "UNKNOWN"
-  ttl = WINDOWS_HEALTH_TTL if node_type == "windows" else PI_HEALTH_TTL
-  return "ONLINE" if age<=ttl else "OFFLINE"
+  return "ONLINE" if age<=WINDOWS_HEALTH_TTL else "OFFLINE"

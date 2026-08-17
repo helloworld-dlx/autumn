@@ -176,6 +176,8 @@ class Handler(BaseHTTPRequestHandler):
   self.send(200,result)
 
  def _do_companion_status(self):
+  # Serving this endpoint is itself fresh evidence that pi5-core is alive.
+  self.server.registry.touch("pi5-core")
   payload={"nodes":self.server.registry.list(),"windowsDataAvailable":False,"workersPaused":None,"jobs":[],"approvals":[]}
   try:key=load_secret(self.server.config.runner_key_path)
   except ValueError:
@@ -186,6 +188,13 @@ class Handler(BaseHTTPRequestHandler):
    _,workers=worker_control_status(self.server.config,key)
   except (RuntimeError,ValueError):
    self.send(200,payload);return
+  # Reaching the Windows Runner and receiving application responses is live
+  # transport evidence even if one application-level payload is not "success".
+  # Keep Node Registry presence aligned with the same real request the Companion
+  # just made, then refresh the nodes included in this response.
+  if self.server.registry.get("windows-main") is None:self.server.registry.upsert({**WINDOWS_MAIN,"last_seen":None})
+  else:self.server.registry.touch("windows-main")
+  payload["nodes"]=self.server.registry.list()
   if jobs.get("status")=="success" and approvals.get("status")=="success" and workers.get("status")=="success":
    jobs_out=jobs.get("output",{}) if isinstance(jobs.get("output"),dict) else {}
    auth_out=approvals.get("output",{}) if isinstance(approvals.get("output"),dict) else {}

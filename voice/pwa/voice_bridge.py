@@ -8,6 +8,7 @@ omits attachment metadata. File contents and transcripts are never copied.
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import mimetypes
 import os
@@ -28,6 +29,7 @@ PORT = int(os.environ.get("VOICE_BRIDGE_PORT", "18791"))
 ROOT = Path(__file__).resolve().parent
 MEDIA = ROOT / "media"
 GATEWAY_HELPER = ROOT / "gateway_turn.mjs"
+TTS_STREAM_HELPER = ROOT / "minimax_tts_stream.mjs"
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
 MAX_CHAT_BYTES = 16 * 1024  # text only
 MAX_CHAT_ATTACHMENT_BYTES = 8 * 1024 * 1024
@@ -36,7 +38,10 @@ MAX_CHAT_ATTACHMENTS = 3
 MAX_CHAT_REQUEST_BYTES = 17 * 1024 * 1024
 MAX_HISTORY_MESSAGES = 40
 AUDIO_TTL_SECONDS = 600
+AUDIO_STREAM_TTL_SECONDS = 180
 AUDIOS: dict[str, tuple[Path, float]] = {}
+AUDIO_STREAMS: dict[str, "AudioStream"] = {}
+AUDIO_STREAMS_LOCK = threading.Lock()
 PHONE_TOUCH_URL = "http://127.0.0.1:27901/v1/internal/nodes/xiaomi15/touch"
 COMPANION_STATUS_URL = "http://127.0.0.1:27901/v1/internal/companion/status"
 TRANSFER_ROOT = Path(os.environ.get("AUTUMN_TRANSFER_ROOT", "/home/xyzlh/jarvis-bridge/transfers"))
@@ -60,6 +65,94 @@ CONVERSATION_TITLES_PATH = Path(os.environ.get(
 CONVERSATION_TITLES_LOCK = threading.Lock()
 MAX_CONVERSATION_TITLE_RECORDS = 500
 MAX_CONVERSATION_TITLE_CHARS = 30
+PRESENCE_DEVICE_RE = re.compile(r"(?:电脑|Windows|设备)", re.IGNORECASE)
+PRESENCE_STATUS_RE = re.compile(r"(?:在线|离线|在不在线|是否连接|连着|连接)", re.IGNORECASE)
+
+
+class AudioStream:
+    """Small in-memory fan-out for one progressive MP3 response.
+
+    MiniMax produces bytes in a background process. The browser can attach
+    after the first bytes are ready and receives already-buffered bytes followed
+    by live bytes. Streams are one-shot and bounded by a short TTL.
+    """
+
+    def __init__(self) -> None:
+        self.condition = threading.Condition()
+        self.chunks: list[bytes] = []
+        self.created = time.monotonic()
+        self.first_chunk_at: float | None = None
+        self.done = False
+        self.error: str | None = None
+        self.cancelled = False
+        self.process: subprocess.Popen[bytes] | None = None
+        self.byte_count = 0
+
+    def attach_process(self, process: subprocess.Popen[bytes]) -> None:
+        with self.condition:
+            self.process = process
+            if self.cancelled and process.poll() is None:
+                process.terminate()
+
+    def push(self, chunk: bytes) -> bool:
+        if not chunk:
+            return True
+        with self.condition:
+            if self.cancelled:
+                return False
+            if self.first_chunk_at is None:
+                self.first_chunk_at = time.monotonic()
+            self.chunks.append(bytes(chunk))
+            self.byte_count += len(chunk)
+            self.condition.notify_all()
+            return True
+
+    def finish(self) -> None:
+        with self.condition:
+            self.done = True
+            self.condition.notify_all()
+
+    def fail(self, message: str) -> None:
+        with self.condition:
+            self.error = message or "MiniMax streaming TTS failed"
+            self.done = True
+            self.condition.notify_all()
+
+    def wait_first(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        with self.condition:
+            while self.first_chunk_at is None and not self.done and not self.error and not self.cancelled:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self.condition.wait(remaining)
+            return self.first_chunk_at is not None
+
+    def iter_chunks(self):
+        index = 0
+        while True:
+            with self.condition:
+                while index >= len(self.chunks) and not self.done and not self.error and not self.cancelled:
+                    self.condition.wait(1.0)
+                if index < len(self.chunks):
+                    chunk = self.chunks[index]
+                    index += 1
+                elif self.done or self.error or self.cancelled:
+                    return
+                else:
+                    continue
+            yield chunk
+
+    def cancel(self) -> None:
+        with self.condition:
+            self.cancelled = True
+            process = self.process
+            self.condition.notify_all()
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
 
 
 class BridgeError(Exception):
@@ -111,7 +204,8 @@ class GatewayTurnClient:
         with self.lock:
             self._start()
 
-    def turn(self, message: str, voice_key: str, source: str = "voice", attachments: list[dict[str, object]] | None = None) -> str:
+    def turn(self, message: str, voice_key: str, source: str = "voice", attachments: list[dict[str, object]] | None = None,
+             on_trace=None) -> str:
         with self.lock:
             process = self._start()
             if process.stdin is None or process.stdout is None:
@@ -126,11 +220,15 @@ class GatewayTurnClient:
                 self.process = None
                 raise RuntimeError("Gateway helper stopped")
         result = json.loads(line)
+        if on_trace is not None and isinstance(result.get("toolTrace"), list):
+            for trace in result["toolTrace"]:
+                if isinstance(trace, dict):
+                    on_trace(trace)
         if not result.get("ok") or not isinstance(result.get("text"), str) or not result["text"].strip():
             raise RuntimeError(str(result.get("error") or "Gateway returned no reply"))
         return result["text"].strip()
 
-    def turn_stream(self, message: str, voice_key: str, on_delta, source: str = "voice") -> str:
+    def turn_stream(self, message: str, voice_key: str, on_delta, source: str = "voice", on_trace=None) -> str:
         request_id = uuid.uuid4().hex
         callback_error: Exception | None = None
         with self.lock:
@@ -165,6 +263,12 @@ class GatewayTurnClient:
                     break
         if callback_error is not None:
             raise callback_error
+        if on_trace is not None:
+            traces = result.get("toolTrace")
+            if isinstance(traces, list):
+                for trace in traces:
+                    if isinstance(trace, dict):
+                        on_trace(trace)
         if not result.get("ok") or not isinstance(result.get("text"), str) or not result["text"].strip():
             raise RuntimeError(str(result.get("error") or "Gateway returned no reply"))
         return result["text"].strip()
@@ -208,16 +312,19 @@ GATEWAY = GatewayTurnClient()
 
 
 def autumn_turn(transcript: str, voice_key: str, gateway: GatewayTurnClient = GATEWAY, source: str = "voice",
-                attachments: list[dict[str, object]] | None = None) -> str:
+                attachments: list[dict[str, object]] | None = None, on_trace=None) -> str:
     try:
-        return gateway.turn(transcript, voice_key, source, attachments)
+        if on_trace is None:
+            return gateway.turn(transcript, voice_key, source, attachments)
+        return gateway.turn(transcript, voice_key, source, attachments, on_trace)
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         raise BridgeError("GATEWAY_FAILED", "Autumn Gateway turn failed", 502) from exc
 
 
-def autumn_turn_stream(transcript: str, voice_key: str, on_delta, gateway: GatewayTurnClient = GATEWAY) -> str:
+def autumn_turn_stream(transcript: str, voice_key: str, on_delta, gateway: GatewayTurnClient = GATEWAY,
+                       on_trace=None) -> str:
     try:
-        return gateway.turn_stream(transcript, voice_key, on_delta, "voice")
+        return gateway.turn_stream(transcript, voice_key, on_delta, "voice", on_trace)
     except BridgeError:
         raise
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
@@ -286,6 +393,78 @@ def register_audio(path: Path) -> str:
     return f"/api/audio/{token}"
 
 
+def _run_minimax_tts_stream(text: str, stream: AudioStream) -> None:
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            ["/usr/bin/node", str(TTS_STREAM_HELPER), text],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=0,
+        )
+        stream.attach_process(process)
+        if process.stdout is None:
+            raise RuntimeError("MiniMax TTS stream stdout unavailable")
+        while True:
+            chunk = os.read(process.stdout.fileno(), 8192)
+            if not chunk:
+                break
+            if not stream.push(chunk):
+                break
+        if stream.cancelled:
+            if process.poll() is None:
+                process.terminate()
+            stream.finish()
+            return
+        stderr = b""
+        if process.stderr is not None:
+            stderr = process.stderr.read(4096) or b""
+        returncode = process.wait(timeout=5)
+        if returncode != 0:
+            detail = stderr.decode("utf-8", "replace").strip().splitlines()[-1:]
+            raise RuntimeError(detail[0] if detail else "MiniMax streaming TTS helper failed")
+        if stream.byte_count < 128:
+            raise RuntimeError("MiniMax streaming TTS returned no audio")
+        stream.finish()
+    except Exception as exc:
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        stream.fail(str(exc))
+
+
+def cleanup_audio_streams() -> None:
+    cutoff = time.monotonic() - AUDIO_STREAM_TTL_SECONDS
+    stale: list[tuple[str, AudioStream]] = []
+    with AUDIO_STREAMS_LOCK:
+        for token, stream in list(AUDIO_STREAMS.items()):
+            if stream.created < cutoff:
+                stale.append((token, stream))
+                AUDIO_STREAMS.pop(token, None)
+    for _token, stream in stale:
+        stream.cancel()
+
+
+def minimax_tts_stream(text: str, first_byte_timeout: float = 8.0) -> str:
+    if not isinstance(text, str) or not text.strip():
+        raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax speech synthesis text was empty")
+    if not TTS_STREAM_HELPER.is_file():
+        raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax streaming TTS helper is unavailable")
+    stream = AudioStream()
+    token = uuid.uuid4().hex
+    with AUDIO_STREAMS_LOCK:
+        AUDIO_STREAMS[token] = stream
+    cleanup_audio_streams()
+    threading.Thread(target=_run_minimax_tts_stream, args=(text, stream), daemon=True).start()
+    if not stream.wait_first(first_byte_timeout):
+        with AUDIO_STREAMS_LOCK:
+            AUDIO_STREAMS.pop(token, None)
+        stream.cancel()
+        raise BridgeError("MINIMAX_TTS_STREAM_FAILED", stream.error or "MiniMax streaming TTS produced no first audio")
+    return f"/api/audio-stream/{token}"
+
+
 def first_speakable_prefix(text: str) -> tuple[str, int] | None:
     """Return one natural early TTS prefix and the exact consumed character count.
 
@@ -313,12 +492,48 @@ def first_speakable_prefix(text: str) -> tuple[str, int] | None:
     return None
 
 
+def is_presence_query(text: str) -> bool:
+    return bool(PRESENCE_DEVICE_RE.search(text or "") and PRESENCE_STATUS_RE.search(text or ""))
+
+
+def supports_on_trace(callback) -> bool:
+    try:
+        parameters = inspect.signature(callback).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(parameter.kind == inspect.Parameter.VAR_KEYWORD or parameter.name == "on_trace" for parameter in parameters)
+
+
+def presence_status_from_trace(traces: list[dict[str, object]]) -> str | None:
+    for trace in traces:
+        if trace.get("tool") != "autumn_nodes" or trace.get("phase") != "result" or trace.get("error"):
+            continue
+        result = trace.get("result")
+        if isinstance(result, dict) and result.get("node") == "windows-main" and result.get("status") in {"ONLINE", "OFFLINE"}:
+            return str(result["status"])
+    return None
+
+
+def fail_closed_presence_reply(query: str, reply: str, traces: list[dict[str, object]]) -> str:
+    if not is_presence_query(query):
+        return reply
+    status = presence_status_from_trace(traces)
+    if status is None:
+        return "我现在没能可靠确认电脑状态。"
+    says_online = bool(re.search(r"在线|连着|已连接", reply))
+    says_offline = bool(re.search(r"离线|不在线|未连接", reply))
+    if (status == "ONLINE" and says_offline) or (status == "OFFLINE" and says_online) or (not says_online and not says_offline):
+        return "我现在没能可靠确认电脑状态。"
+    return reply
+
+
 def cleanup_audio() -> None:
     cutoff = time.monotonic() - AUDIO_TTL_SECONDS
     for token, (path, created) in list(AUDIOS.items()):
         if created < cutoff:
             path.unlink(missing_ok=True)
             AUDIOS.pop(token, None)
+    cleanup_audio_streams()
 
 
 def _auto_conversation_title(text: str) -> str:
@@ -455,7 +670,12 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_conversation:
     stt_ms = round((time.monotonic() - started) * 1000)
     key = conversation_key(requested_conversation)
     before_transfers = _returned_transfer_ids(transfer_root)
-    reply = autumn(transcript, key)
+    tool_trace: list[dict[str, object]] = []
+    if supports_on_trace(autumn):
+        reply = autumn(transcript, key, on_trace=tool_trace.append)
+    else:
+        reply = autumn(transcript, key)
+    reply = fail_closed_presence_reply(transcript, reply, tool_trace)
     reply_attachments = _new_returned_attachments(before_transfers, transfer_root)
     if _should_create_first_turn_title(requested_conversation, new_conversation, title_path):
         try:
@@ -480,6 +700,7 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_conversation:
         "reply": reply,
         "replyAttachments": _safe_attachment_metadata(reply_attachments),
         "audioUrl": audio_url,
+        "toolTrace": tool_trace,
         "latencyMs": {"stt": stt_ms, "autumn": autumn_ms, "tts": total_ms - stt_ms - autumn_ms, "total": total_ms},
     }
 
@@ -487,6 +708,7 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_conversation:
 
 def process_turn_stream(audio: bytes, filename: str, mime: str, requested_conversation: str | None, emit,
                         stt=siliconflow_transcribe, autumn_stream=autumn_turn_stream, tts=minimax_tts,
+                        tts_stream=minimax_tts_stream,
                         title_path: Path = CONVERSATION_TITLES_PATH, new_conversation: bool = False,
                         history=GATEWAY.history, metadata_path: Path = ATTACHMENT_META_PATH,
                         transfer_root: Path = TRANSFER_ROOT) -> dict[str, object]:
@@ -506,59 +728,52 @@ def process_turn_stream(audio: bytes, filename: str, mime: str, requested_conver
     streamed = ""
     first_text_ms: int | None = None
     first_voice_ms: int | None = None
-    first_consumed = 0
-    first_chunk = ""
-    early_tts_error: BridgeError | None = None
+    audio_seq = 0
+    tool_trace: list[dict[str, object]] = []
+    presence_query = is_presence_query(transcript)
 
     def on_delta(delta: str, accumulated: str) -> None:
-        nonlocal streamed, first_text_ms, first_voice_ms, first_consumed, first_chunk, early_tts_error
+        nonlocal streamed, first_text_ms
         streamed = accumulated or (streamed + delta)
         if first_text_ms is None and streamed.strip():
             first_text_ms = round((time.monotonic() - stt_done) * 1000)
-        if streamed:
+        if streamed and not presence_query:
             emit({"type": "text", "text": streamed, "latencyMs": {"firstText": first_text_ms}})
-        if first_consumed or early_tts_error is not None:
-            return
-        candidate = first_speakable_prefix(streamed)
-        if not candidate:
-            return
-        chunk, consumed = candidate
-        if not chunk:
-            return
-        try:
-            path = tts(chunk)
-            audio_url = register_audio(path)
-        except BridgeError as exc:
-            early_tts_error = exc
-            return
-        first_chunk = chunk
-        first_consumed = consumed
-        first_voice_ms = round((time.monotonic() - started) * 1000)
-        emit({
-            "type": "audio",
-            "seq": 0,
-            "text": chunk,
-            "audioUrl": audio_url,
-            "latencyMs": {"firstText": first_text_ms, "firstVoice": first_voice_ms},
-        })
 
-    reply = autumn_stream(transcript, key, on_delta)
+    def on_trace(trace: dict[str, object]) -> None:
+        tool_trace.append(trace)
+
+    if supports_on_trace(autumn_stream):
+        reply = autumn_stream(transcript, key, on_delta, on_trace=on_trace)
+    else:
+        reply = autumn_stream(transcript, key, on_delta)
     final_observed = time.monotonic()
-    if early_tts_error is not None:
-        raise early_tts_error
 
-    audio_seq = 1 if first_consumed else 0
-    remainder = reply[first_consumed:].strip() if first_consumed else reply
-    if remainder:
-        path = tts(remainder)
+    reply = fail_closed_presence_reply(transcript, reply, tool_trace)
+    if presence_query:
+        if reply.strip():
+            first_text_ms = first_text_ms or round((time.monotonic() - stt_done) * 1000)
+            emit({"type": "text", "text": reply, "latencyMs": {"firstText": first_text_ms}})
+
+    # 3C-2 stability rule: synthesize exactly one final reply per turn.
+    #
+    # Earlier 3C-2 builds combined an early partial-TTS request with a second
+    # final/remainder TTS request. On real Xiaomi playback that path could repeat
+    # speech when provider/browser streaming boundaries did not line up exactly.
+    # Keep text deltas for responsiveness, but use the proven V0.2 full-TTS path
+    # once after the final reply. One turn -> one audio URL -> one playback claim.
+    # Latency is deliberately secondary to deterministic, non-duplicated speech.
+    if reply:
+        path = tts(reply)
         audio_url = register_audio(path)
         if first_voice_ms is None:
             first_voice_ms = round((time.monotonic() - started) * 1000)
         emit({
             "type": "audio",
             "seq": audio_seq,
-            "text": remainder,
+            "text": reply,
             "audioUrl": audio_url,
+            "streaming": False,
             "latencyMs": {"firstText": first_text_ms, "firstVoice": first_voice_ms},
         })
 
@@ -584,6 +799,7 @@ def process_turn_stream(audio: bytes, filename: str, mime: str, requested_conver
         "transcript": transcript,
         "reply": reply,
         "replyAttachments": _safe_attachment_metadata(reply_attachments),
+        "toolTrace": tool_trace,
         "latencyMs": {
             "stt": stt_ms,
             "firstText": first_text_ms,
@@ -766,7 +982,12 @@ def process_chat(message: object, requested_conversation: str | None, attachment
     key = conversation_key(requested_conversation)
     before_transfers = _returned_transfer_ids(transfer_root)
     gateway_message = clean or "请查看我附上的文件。"
-    reply = autumn(gateway_message, key, source="chat", attachments=safe_attachments)
+    tool_trace: list[dict[str, object]] = []
+    if supports_on_trace(autumn):
+        reply = autumn(gateway_message, key, source="chat", attachments=safe_attachments, on_trace=tool_trace.append)
+    else:
+        reply = autumn(gateway_message, key, source="chat", attachments=safe_attachments)
+    reply = fail_closed_presence_reply(clean, reply, tool_trace)
     reply_attachments = _new_returned_attachments(before_transfers, transfer_root)
 
     title_source = clean
@@ -806,6 +1027,7 @@ def process_chat(message: object, requested_conversation: str | None, attachment
         "conversationKey": key,
         "reply": reply,
         "replyAttachments": _safe_attachment_metadata(reply_attachments),
+        "toolTrace": tool_trace,
         "latencyMs": round((time.monotonic() - started) * 1000),
     }
     if metadata_stored is not None:
@@ -1190,6 +1412,31 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in static:
             name, content_type = static[self.path]; data = (ROOT / name).read_bytes()
             self.send_response(200); self.send_header("Content-Type", content_type); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
+        if self.path.startswith("/api/audio-stream/"):
+            token = self.path.rsplit("/", 1)[-1]
+            with AUDIO_STREAMS_LOCK:
+                stream = AUDIO_STREAMS.get(token)
+            if stream is None:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Accept-Ranges", "none")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                for chunk in stream.iter_chunks():
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                stream.cancel()
+            finally:
+                with AUDIO_STREAMS_LOCK:
+                    AUDIO_STREAMS.pop(token, None)
+            return
         if self.path.startswith("/api/audio/"):
             item = AUDIOS.get(self.path.rsplit("/", 1)[-1])
             if not item or not item[0].is_file(): self.send_error(404); return

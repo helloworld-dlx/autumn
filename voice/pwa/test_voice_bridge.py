@@ -10,7 +10,7 @@ class VoiceBridgeTests(unittest.TestCase):
         chunk = bridge.first_speakable_prefix("我觉得可以先这样做。后面再继续解释。")
         self.assertEqual(chunk, ("我觉得可以先这样做。", len("我觉得可以先这样做。")))
 
-    def test_streaming_turn_emits_early_audio_and_final_without_new_session(self):
+    def test_streaming_turn_emits_one_final_audio_and_final_without_new_session(self):
         events = []
         spoken = []
         with tempfile.TemporaryDirectory() as temp:
@@ -19,11 +19,13 @@ class VoiceBridgeTests(unittest.TestCase):
             media = Path(temp) / "speech.mp3"
             media.write_bytes(b"audio")
 
-            def autumn_stream(text, key, on_delta):
+            def autumn_stream(text, key, on_delta, on_trace=None):
                 self.assertEqual(text, "请解释流水线")
                 self.assertEqual(key, "companion:main")
                 on_delta("流水线 CPU 可以同时处理多条指令。", "流水线 CPU 可以同时处理多条指令。")
                 on_delta("后续阶段会继续并行推进。", "流水线 CPU 可以同时处理多条指令。后续阶段会继续并行推进。")
+                if on_trace:
+                    on_trace({"atMs": 12, "phase": "first_model_event", "stream": "assistant"})
                 return "流水线 CPU 可以同时处理多条指令。后续阶段会继续并行推进。"
 
             def tts(text):
@@ -35,6 +37,7 @@ class VoiceBridgeTests(unittest.TestCase):
                 stt=lambda *_: "请解释流水线",
                 autumn_stream=autumn_stream,
                 tts=tts,
+                tts_stream=lambda _text: self.fail("stable path must not use streaming TTS"),
                 transfer_root=root,
             )
         self.assertEqual(result["conversationKey"], "companion:main")
@@ -42,6 +45,123 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "final")
         self.assertEqual("".join(spoken), result["reply"])
         self.assertNotIn("voice:", repr(events))
+        self.assertEqual(len([event for event in events if event.get("type") == "audio"]), 1)
+        self.assertTrue(all(event.get("streaming") is False for event in events if event.get("type") == "audio"))
+        self.assertEqual(result["toolTrace"][0]["phase"], "first_model_event")
+
+    def test_streaming_turn_uses_existing_full_tts_for_stability(self):
+        events = []
+        spoken = []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "transfers"
+            root.mkdir()
+            media = Path(temp) / "speech.mp3"
+            media.write_bytes(b"audio")
+
+            def autumn_stream(_text, _key, on_delta, on_trace=None):
+                on_delta("这是第一句。", "这是第一句。")
+                return "这是第一句。"
+
+            def full_tts(text):
+                spoken.append(text)
+                return media
+
+            bridge.process_turn_stream(
+                b"a", "a.webm", "audio/webm", "main", events.append,
+                stt=lambda *_: "测试",
+                autumn_stream=autumn_stream,
+                tts=full_tts,
+                tts_stream=lambda _text: self.fail("stable path must not use streaming TTS"),
+                transfer_root=root,
+            )
+        audio = next(event for event in events if event.get("type") == "audio")
+        self.assertFalse(audio.get("streaming"))
+        self.assertTrue(audio["audioUrl"].startswith("/api/audio/"))
+        self.assertEqual(spoken, ["这是第一句。"])
+
+    def test_streaming_speaks_accumulated_reply_exactly_once(self):
+        events = []
+        spoken = []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "transfers"
+            root.mkdir()
+            media = Path(temp) / "speech.mp3"
+            media.write_bytes(b"audio")
+
+            def autumn_stream(_text, _key, on_delta, on_trace=None):
+                on_delta("这是第一句内容。", "这是第一句内容。")
+                on_delta("这是第一句内容。这是第二句内容。", "这是第一句内容。这是第二句内容。")
+                on_delta("这是第二句内容。", "这是第一句内容。这是第二句内容。")
+                return "这是第一句内容。这是第二句内容。"
+
+            result = bridge.process_turn_stream(
+                b"a", "a.webm", "audio/webm", "main", events.append,
+                stt=lambda *_: "普通问题",
+                autumn_stream=autumn_stream,
+                tts=lambda text: spoken.append(text) or media,
+                tts_stream=lambda _text: self.fail("stable path must not use streaming TTS"),
+                transfer_root=root,
+            )
+        self.assertEqual(spoken, ["这是第一句内容。这是第二句内容。"])
+        self.assertEqual(result["reply"], "这是第一句内容。这是第二句内容。")
+        self.assertEqual([event["seq"] for event in events if event.get("type") == "audio"], [0])
+
+    def test_presence_without_evidence_is_fail_closed(self):
+        events = []
+        spoken = []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "transfers"
+            root.mkdir()
+            media = Path(temp) / "speech.mp3"
+            media.write_bytes(b"audio")
+
+            def autumn_stream(_text, _key, on_delta, on_trace=None):
+                on_delta("在线。", "在线。")
+                return "在线。"
+
+            result = bridge.process_turn_stream(
+                b"a", "a.webm", "audio/webm", "main", events.append,
+                stt=lambda *_: "帮我看一下电脑现在在不在线",
+                autumn_stream=autumn_stream,
+                tts=lambda text: spoken.append(text) or media,
+                tts_stream=lambda _text: self.fail("stable path must not use streaming TTS"),
+                transfer_root=root,
+            )
+        self.assertEqual(result["reply"], "我现在没能可靠确认电脑状态。")
+        self.assertEqual(spoken, ["我现在没能可靠确认电脑状态。"])
+        self.assertNotIn("在线。", [event.get("text") for event in events if event.get("type") == "text"])
+
+    def test_presence_result_mismatch_is_fail_closed_and_normal_text_is_unchanged(self):
+        traces = [{"tool": "autumn_nodes", "phase": "result", "result": {"node": "windows-main", "status": "OFFLINE"}}]
+        self.assertEqual(
+            bridge.fail_closed_presence_reply("电脑在线吗", "在线。", traces),
+            "我现在没能可靠确认电脑状态。",
+        )
+        self.assertEqual(
+            bridge.fail_closed_presence_reply("介绍一下 RV32I", "在线。", []),
+            "在线。",
+        )
+
+    def test_audio_stream_buffers_then_finishes(self):
+        stream = bridge.AudioStream()
+        self.assertFalse(stream.wait_first(0.001))
+        self.assertTrue(stream.push(b"abc"))
+        self.assertTrue(stream.wait_first(0.001))
+        stream.push(b"def")
+        stream.finish()
+        self.assertEqual(b"".join(stream.iter_chunks()), b"abcdef")
+
+    def test_audio_stream_cancel_rejects_future_chunks(self):
+        stream = bridge.AudioStream()
+        stream.cancel()
+        self.assertFalse(stream.push(b"late"))
+        self.assertEqual(list(stream.iter_chunks()), [])
+
+    def test_streaming_audio_route_is_explicit_and_uncached(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn('/api/audio-stream/', source)
+        self.assertIn('X-Accel-Buffering", "no', source)
+        self.assertIn('Accept-Ranges", "none', source)
 
     def test_loopback_only(self):
         bridge.assert_loopback("127.0.0.1")

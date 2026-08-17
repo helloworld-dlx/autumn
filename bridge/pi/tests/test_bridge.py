@@ -113,7 +113,7 @@ class BridgeTests(unittest.TestCase):
   node=registry.upsert({**PI5_CORE,"last_seen":None})
   self.assertEqual(node["node_id"],"pi5-core");self.assertEqual(node["protocol_version"],"1");self.assertEqual(node["online"],"ONLINE")
   self.assertEqual(registry.list(),[node]);self.assertEqual(registry.touch("pi5-core")["last_seen"],"2026-08-14T00:00:00Z")
-  self.assertEqual(registry.derive_presence("core",now-timedelta(seconds=91)),"OFFLINE")
+  self.assertEqual(registry.derive_presence("core",now-timedelta(days=30)),"ONLINE")
   self.assertEqual(registry.derive_presence("phone",now-timedelta(seconds=91)),"RECENT")
   self.assertEqual(registry.derive_presence("phone",now-timedelta(minutes=11)),"UNKNOWN")
  def test_node_registry_rejects_unknown_and_private_fields(self):
@@ -167,7 +167,23 @@ class BridgeTests(unittest.TestCase):
    self.assertTrue(payload["windowsDataAvailable"]);self.assertFalse(payload["workersPaused"])
    self.assertEqual(payload["jobs"][0]["job_id"],"j1");self.assertEqual(payload["approvals"][0]["workspace"],"autumn")
    self.assertIn("pi5-core",[node["node_id"] for node in payload["nodes"]])
+   statuses={node["node_id"]:node["online"] for node in payload["nodes"]}
+   self.assertEqual(statuses["pi5-core"],"ONLINE")
+   self.assertEqual(statuses["windows-main"],"ONLINE")
    self.assertNotIn("token",json.dumps(payload))
+  finally:z.shutdown();z.server_close();thread.join()
+
+ def test_companion_status_marks_windows_online_on_transport_response_even_if_data_is_unavailable(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32)
+  z=BridgeServer(replace(self.c,listen_port=0),start_probe=False);thread=threading.Thread(target=z.serve_forever);thread.start()
+  try:
+   with patch("jarvis_bridge.server.job_list",return_value=(503,{"status":"failed","output":{}})), \
+        patch("jarvis_bridge.server.authorization_list",return_value=(503,{"status":"failed","output":{}})), \
+        patch("jarvis_bridge.server.worker_control_status",return_value=(503,{"status":"failed","output":{}})):
+    x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("GET","/v1/internal/companion/status");r=x.getresponse();payload=json.loads(r.read());x.close()
+   self.assertEqual(r.status,200);self.assertFalse(payload["windowsDataAvailable"])
+   statuses={node["node_id"]:node["online"] for node in payload["nodes"]}
+   self.assertEqual(statuses["pi5-core"],"ONLINE");self.assertEqual(statuses["windows-main"],"ONLINE")
   finally:z.shutdown();z.server_close();thread.join()
 
  def test_companion_file_pull_requires_token_and_never_returns_local_path(self):

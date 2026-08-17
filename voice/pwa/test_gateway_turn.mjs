@@ -25,11 +25,13 @@ assert.match(source, /const label = firstString\(session\.label, session\.title,
 assert.doesNotMatch(source, /firstString\(session\.label, session\.title, session\.displayName/);
 assert.ok(source.includes('scopes: ["operator.write"]'));
 assert.ok(!source.includes('operator.admin'));
+assert.ok(source.includes('caps: ["tool-events"]'));
 
 console.log("Gateway turn profile regression: PASS");
 
 assert.match(source, /GATEWAY_SESSION_MISMATCH/, "Gateway event routing is guarded against cross-session drift");
-assert.match(source, /pending\.set\(runId, \{ resolve, timer, sessionKey, onDelta, lastText: "" \}\)/, "pending turns retain the exact requested session key and streaming state");
+assert.match(source, /pending\.set\(runId, \{ resolve, timer, sessionKey, onDelta, onTrace, lastText: "", trace:/, "pending turns retain the exact requested session key and streaming state");
+assert.match(source, /data\.name !== "autumn_nodes"/, "tool diagnostics are limited to the approved presence tool");
 
 assert.match(source, /payload\.state === "delta"/, "Gateway chat deltas are surfaced for streaming voice");
 assert.match(source, /type: "delta"/, "streaming helper emits delta records");
