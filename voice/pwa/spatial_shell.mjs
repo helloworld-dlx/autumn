@@ -144,13 +144,13 @@ function installStyles() {
   .spatial-context-open{border:0;background:none;color:#fff;text-align:left;padding:0}
   .spatial-context-open b{font-size:11px}.spatial-context-open small{display:block;font-size:8px;color:var(--muted-sp);margin-top:2px}
   .spatial-context-pop{
-    position:absolute;left:0;top:44px;width:236px;z-index:40;display:none;padding:7px;border-radius:16px;
+    position:absolute;left:0;top:44px;width:min(680px,calc(100vw - 120px));z-index:40;display:none;padding:10px;border-radius:20px;
     background:rgba(61,38,61,.44);border:1px solid rgba(255,255,255,.16);
     backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:var(--shadow-sp)
   }
   .spatial-context-pop.open{display:block}
   .spatial-context-pop .conversation-rail{
-    display:block!important;position:static!important;inset:auto!important;width:auto!important;max-height:50vh!important;
+    display:block!important;position:static!important;inset:auto!important;width:auto!important;max-height:min(68vh,680px)!important;
     background:transparent!important;border:0!important;box-shadow:none!important;border-radius:0!important;color:#fff!important;overflow:auto!important
   }
   .spatial-context-pop .conversation-head{color:#fff}.spatial-context-pop .conversation-item{color:#fff;border-color:rgba(255,255,255,.08)!important}
@@ -249,11 +249,8 @@ function installStyles() {
   .spatial-chat-host .chat-pane-head{background:transparent!important;border-color:rgba(255,255,255,.07)!important;color:#fff!important}
   .spatial-chat-host .chat-pane-title small,.spatial-chat-host .chat-hint,.spatial-chat-host .chat-thinking{color:rgba(255,255,255,.57)!important}
   .spatial-chat-host .chat-context{display:none!important}
-  .spatial-chat-host .conversation-toggle{display:inline-flex!important;background:rgba(255,255,255,.07)!important;color:#fff!important;border-color:rgba(255,255,255,.11)!important}
+  .spatial-chat-host .conversation-toggle{display:none!important}
   .spatial-chat-host .chat-pane-head{position:relative}
-  .spatial-chat-context-pop{position:absolute;left:10px;right:10px;top:54px;z-index:60;display:none;max-height:min(62vh,560px);overflow:auto;padding:8px;border-radius:17px;background:rgba(57,35,57,.76);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);box-shadow:0 20px 60px rgba(40,22,39,.25)}
-  .spatial-chat-context-pop.open{display:block}
-  .spatial-chat-context-pop .conversation-rail{display:flex!important;position:static!important;width:auto!important;max-height:none!important;background:transparent!important;border:0!important;box-shadow:none!important;transform:none!important}
   .spatial-chat-host .chat-messages{color:#fff!important}
   .spatial-chat-host .chat-message{background:rgba(255,255,255,.075)!important;border-color:rgba(255,255,255,.11)!important;color:#fff!important;box-shadow:none!important}
   .spatial-chat-host .chat-message.user{background:rgba(224,143,115,.16)!important;border-color:rgba(255,205,174,.12)!important}
@@ -333,6 +330,7 @@ function installStyles() {
   .spatial-toast.show{opacity:1;transform:translate(-50%,0)}
 
   @media(max-width:900px){
+    .spatial-context-pop{left:8px;right:8px;top:50px;width:auto!important;max-height:72vh;overflow:auto}
     #autumn-spatial-root,#autumn-spatial-root.chat-collapsed{display:block}
     .spatial-rail{display:none}
     .spatial-main{height:100vh;height:100dvh;padding:10px 10px 70px}
@@ -444,9 +442,10 @@ function installSpatialShell() {
       <section class="spatial-field">
         <div class="spatial-toast" id="spatial-toast"></div>
         <header class="spatial-field-head">
-          <div class="spatial-context-open"><b>Context Field</b><small>当前工作空间 · Conversation 在右侧管理</small></div>
+          <button type="button" class="spatial-context-open" id="spatial-context-open"><b>Context Field</b><small>点击切换 / 管理 Conversation</small></button>
           <div class="spatial-field-actions" id="spatial-field-actions"></div>
         </header>
+        <div class="spatial-context-pop" id="spatial-context-pop"></div>
         <div class="spatial-canvas">
           <div class="spatial-idle" id="spatial-idle"><div class="spatial-idle-glass"><div class="spatial-idle-copy"><div><b>AUTUMN · IDLE</b><span>空间默认保持安静。<br>Eyes、Files、设备状态只在需要时出现。</span></div></div></div></div>
           <div id="spatial-object-layer"></div>
@@ -468,7 +467,7 @@ function installSpatialShell() {
   const objectLayer = root.querySelector("#spatial-object-layer");
   const edgeStack = root.querySelector("#spatial-edge-stack");
   const idle = root.querySelector("#spatial-idle");
-  const contextPop = null;
+  const contextPop = root.querySelector("#spatial-context-pop");
   const toast = root.querySelector("#spatial-toast");
   const talkOverlay = root.querySelector("#spatial-talk-overlay");
   const talkBody = root.querySelector("#spatial-talk-body");
@@ -483,10 +482,7 @@ function installSpatialShell() {
   if (railBackdrop) root.append(railBackdrop);
   chatHost.append(chatShell);
   talkBody.append(talkWrap);
-  const chatContextPop = document.createElement("div");
-  chatContextPop.className = "spatial-chat-context-pop";
-  if (conversationRail) chatContextPop.append(conversationRail);
-  chatShell.querySelector(".chat-pane-head")?.append(chatContextPop);
+  if (conversationRail) contextPop?.append(conversationRail);
   if (activityPage) utilityActivity.append(activityPage);
   if (devicesPage) utilityDevices.append(devicesPage);
 
@@ -758,6 +754,7 @@ function installSpatialShell() {
   }
 
   function showEyes() {
+    globalThis.autumnEyesRefreshSources?.();
     presentObject("vision");
   }
 
@@ -809,13 +806,14 @@ function installSpatialShell() {
     utilityDrawer.classList.remove("open");
   }
 
-  function toggleChatContext(force = null) {
-    const open = force === null ? !chatContextPop.classList.contains("open") : Boolean(force);
-    chatContextPop.classList.toggle("open", open);
+  function toggleContextPop(force = null) {
+    if (!contextPop) return;
+    const open = force === null ? !contextPop.classList.contains("open") : Boolean(force);
+    contextPop.classList.toggle("open", open);
   }
 
   chatCollapse.addEventListener("click", () => {
-    toggleChatContext(false);
+    toggleContextPop(false);
     if (isMobile()) root.classList.toggle("mobile-chat-collapsed");
     else root.classList.toggle("chat-collapsed");
   });
@@ -823,21 +821,15 @@ function installSpatialShell() {
     if (isMobile()) root.classList.remove("mobile-chat-collapsed");
   });
 
-  chatContextPop.addEventListener("click", (event) => {
-    if (event.target.closest?.(".conversation-item")) toggleChatContext(false);
+  contextPop?.addEventListener("click", (event) => {
+    if (event.target.closest?.(".conversation-item")) toggleContextPop(false);
+  });
+  root.querySelector("#spatial-context-open")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleContextPop();
   });
   document.addEventListener("click", (event) => {
-    if (!chatContextPop.contains(event.target) && !event.target.closest?.("#conversation-toggle,.chat-pane-title")) toggleChatContext(false);
-  });
-  document.querySelector("#conversation-toggle")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    toggleChatContext();
-  }, true);
-  chatShell.querySelector(".chat-pane-title")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    toggleChatContext();
+    if (contextPop?.classList.contains("open") && !contextPop.contains(event.target) && !event.target.closest?.("#spatial-context-open")) toggleContextPop(false);
   });
 
   root.querySelector("#spatial-talk-close").addEventListener("click", closeTalk);
@@ -895,6 +887,10 @@ function installSpatialShell() {
   if (legacyLayout) legacyLayout.setAttribute("aria-hidden", "true");
   refreshFilesSnapshot();
   updateIdle();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.documentElement.classList.remove("spatial-boot");
+    document.documentElement.classList.add("spatial-ready");
+  }));
 }
 
 if (typeof document !== "undefined") {

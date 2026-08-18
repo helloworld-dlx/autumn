@@ -21,10 +21,15 @@ assert.match(source, /request\.action === "history"/);
 assert.match(source, /client\.request\("sessions\.list"/);
 assert.match(source, /agent:main:companion:/);
 assert.match(source, /request\.action === "sessions"/);
+assert.doesNotMatch(source, /operator\.admin|sessions\.delete|session-delete/, "Gateway helper has no admin deletion path");
 assert.match(source, /const label = firstString\(session\.label, session\.title, session\.derivedTitle\)/);
 assert.doesNotMatch(source, /firstString\(session\.label, session\.title, session\.displayName/);
 assert.ok(source.includes('scopes: ["operator.write"]'));
-assert.ok(!source.includes('operator.admin'));
+assert.doesNotMatch(source, /autumn-voice-bridge-session-delete|operator\.admin/, "no deletion admin client remains");
+assert.match(source, /request\.action === "effective_tools"/);
+assert.match(source, /client\.request\("tools\.effective"/);
+assert.match(source, /result\.groups\.flatMap/, "effective-tools accepts the current Gateway grouped response");
+assert.match(source, /typeof tool\?\.id === "string"/, "effective-tools accepts the current Gateway tool id field");
 assert.ok(source.includes('caps: ["tool-events"]'));
 
 console.log("Gateway turn profile regression: PASS");

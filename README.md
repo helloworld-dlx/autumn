@@ -27,6 +27,7 @@ Xiaomi 15 是 Companion / mobile node。Autumn 的用户体验保持 One Autumn�
 
 - raw shell denied；Windows authority 外的 `C:\` 路径拒绝。
 - Delete / L5 denied。
+- Conversation“归档”只保存 UI 元数据并隐藏/恢复列表项，不删除 OpenClaw Session；超过 14 天的归档以后只能由用户手动 maintenance 作为候选，不由 Autumn 主 Agent 自动清理。
 - Python / Node 只能走 structured L3，当前为 `AUTHORIZATION_REQUIRED`。
 - secrets、private memory、sessions、runtime state 永不提交 Git。
 

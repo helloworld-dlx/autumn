@@ -35,4 +35,8 @@ Continuous Voice now supports stability-first browser-side Natural Barge-in: spe
 
 Streaming text is retained. Aggressive Streaming TTS and further latency optimization are optional future work, not acceptance requirements. The MiniMax tool-selection / `autumn_nodes` issue is an independent Autumn Core Tool Selection backlog item and does not block Phase 3C Voice closure.
 
+### V0.3 Phase 3D — Spatial Eyes and Conversation Reliability
+
+**Status:** IN PROGRESS — Soft Archive implemented. Main cannot be archived; ordinary Conversations can be confirmed-archived, hidden from the default list, viewed in `已归档`, and restored. The small server-side `conversation_ui_state.json` contains only archive metadata and is written atomically; it never copies transcripts or calls `sessions.delete`/`sessions.patch`. Archive entries older than 14 days are future maintenance candidates only. Final device acceptance (Chat/Talk/Eyes, Barge-in, Remote Eyes, and PWA cold starts) is still required before `PASS / CLOSED / FROZEN`.
+
 Any OpenCode Worker, Complexity Gate, Phase 3D, or Phase 3E work requires a new, explicit scope and acceptance plan. The V0.2 and frozen Phase 3B contracts remain unchanged unless separately authorized.

@@ -76,7 +76,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-  assert.match(worker, /autumn-companion-shell-v15/);
+  assert.match(worker, /autumn-companion-shell-v18/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -267,9 +267,41 @@ test("collapsed Chat uses a compact icon instead of rotated conversation text", 
   assert.doesNotMatch(source, /writing-mode:vertical-rl;transform:rotate\(180deg\);margin-top:8px/);
 });
 
-test("conversation selector lives inside Chat", async () => {
+test("conversation manager lives in the main Context Field, not Chat", async () => {
   const source = await readFile(new URL("../spatial_shell.mjs", import.meta.url), "utf8");
-  assert.match(source, /spatial-chat-context-pop/);
-  assert.match(source, /chatShell\.querySelector\("\.chat-pane-head"\)\?\.append\(chatContextPop\)/);
-  assert.match(source, /chatShell\.querySelector\("\.chat-pane-title"\)\?\.addEventListener/);
+  assert.match(source, /id="spatial-context-open"/);
+  assert.match(source, /id="spatial-context-pop"/);
+  assert.match(source, /contextPop\?\.append\(conversationRail\)/);
+  assert.match(source, /\.spatial-chat-host \.conversation-toggle\{display:none!important\}/);
+  assert.doesNotMatch(source, /spatial-chat-context-pop/);
+});
+
+test("installed PWA uses a first-paint spatial boot gate", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  const source = await readFile(new URL("../spatial_shell.mjs", import.meta.url), "utf8");
+  assert.match(html, /<html lang="zh-CN" class="spatial-boot">/);
+  assert.match(html, /html\.spatial-boot \.app>\.layout\{visibility:hidden\}/);
+  assert.match(source, /classList\.remove\("spatial-boot"\)/);
+  assert.match(source, /classList\.add\("spatial-ready"\)/);
+});
+
+test("conversation soft archive is explicit, conservative, and Main is protected", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(html, /id="conversation-cleanup"/);
+  assert.match(html, /id="conversation-archived"/);
+  assert.match(html, /conversationListTitle\.textContent=showArchived\?'已归档':'Conversation'/, "conversation list script remains valid after archive wiring");
+  assert.match(html, /async function cleanupTestConversations/);
+  assert.match(html, /\/api\/conversations\/.*\/archive/);
+  assert.doesNotMatch(html, /method:'DELETE'/, "archive never calls session deletion");
+  assert.match(html, /if\(id==='main'\)return/);
+  assert.match(html, /globalThis\.autumnConversationController=/);
+  assert.match(html, /只有这里的“＋”可以创建新 Conversation/);
+  assert.match(html, /async function archiveConversation\(id,title/);
+  assert.match(html, /if\(!confirmed&&!confirm\(/, "individual archive requires confirmation");
+  assert.match(html, /activeConversationId='main'/, "archiving active Conversation returns to Main");
+  assert.match(html, /归档 Conversation 失败/);
+  assert.match(html, /当前回复还在进行中，请稍后再归档对话/);
+  assert.match(html, /globalThis\.autumnPresentUiHints\?\.\(payload\.uiHints\)/, "Chat presents spatial objects from structured uiHints");
+  assert.match(html, /event\.type==='ui'/, "streaming Talk presents tool-driven spatial hints");
+  assert.match(html, /fetch\(\'\/api\/barge-intent\'/, "Barge-in uses an STT intent gate before aborting playback");
 });

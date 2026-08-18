@@ -48,6 +48,17 @@ class FileActionTests(unittest.TestCase):
         output = execute_request(ActionRequest("tiny", "files.list_directory", {"path": str(self.root)}, "test"), tiny)
         self.assertEqual(output.status, "success"); self.assertEqual(output.output["stop_reason"], "output_limit")
 
+    def test_recursive_fixture_finds_direct_depth_two_and_depth_four(self):
+        direct = self.root / "总结与计划"; direct.mkdir()
+        depth_two = self.root / "Study" / "FPGA" / "总结与计划"; depth_two.mkdir(parents=True)
+        depth_four = self.root / "Projects" / "Autumn" / "Notes" / "Archive" / "总结与计划"; depth_four.mkdir(parents=True)
+        (self.root / "Study" / "FPGA" / "总结与计划.txt").write_text("synthetic", encoding="utf-8")
+        result = self.invoke("files.search", {"path": str(self.root), "query": "总结与计划", "kind": "directory", "max_depth": 4})
+        self.assertEqual(result.status, "success", result.error_code)
+        self.assertEqual({item["path"] for item in result.output["items"]}, {str(direct), str(depth_two), str(depth_four)})
+        self.assertEqual(self.invoke("files.search", {"path": str(self.root), "query": "总结与计划", "kind": "file", "max_depth": 4}).output["returned_count"], 1)
+        self.assertEqual(self.invoke("files.search", {"path": str(self.root), "query": "does-not-match", "kind": "any", "max_depth": 4}).output["returned_count"], 0)
+
     def test_kind_wrong_json_types_and_large_result_budget_are_rejected_or_safe(self):
         for value in ([], {}, 1, True, None):
             result = self.invoke("files.search", {"path": str(self.root), "query": "report", "kind": value})
@@ -145,9 +156,24 @@ class FileActionTests(unittest.TestCase):
         self.assertEqual(result.status, "success", result.error_code)
         self.assertEqual(result.output["items"], [item])
         self.assertEqual(run.call_args.args[0][1:5], ["-n", "20", "-s", "-full-path-and-name"])
-        self.assertEqual(run.call_args.args[0][-1], "数字ic书单与学习路线规划")
+        self.assertEqual(run.call_args.args[0][-1], "file:数字ic书单与学习路线规划")
         self.assertEqual(run.call_args.kwargs["cwd"], "D:\\")
         self.assertFalse(run.call_args.kwargs["shell"])
+
+    def test_production_search_qualifies_kind_without_losing_recursive_results(self):
+        config = replace(self.config, read_root=Path(r"D:\\"), search_max_results=20)
+        directory = {"name": "总结与计划", "path": r"D:\\Study\\FPGA\\资料\\总结与计划", "kind": "directory", "size_bytes": None, "modified_at": "2026-01-01T00:00:00+00:00"}
+        completed = subprocess.CompletedProcess([], 0, directory["path"] + "\n", "")
+        with patch("jarvis_runner.files.EVERYTHING_EXECUTABLE_PATH", Path(os.__file__)), patch("jarvis_runner.files.subprocess.run", return_value=completed) as run, patch("jarvis_runner.files._everything_item", return_value=directory):
+            result = execute_request(ActionRequest("deep-directory", "files.search", {"path": r"D:\\", "query": "总结与计划", "kind": "directory"}, "test"), config)
+        self.assertEqual(result.status, "success", result.error_code)
+        self.assertEqual(result.output["items"], [directory])
+        self.assertEqual(run.call_args.args[0][-1], "folder:总结与计划")
+
+    def test_everything_query_preserves_kind_qualifier_for_fallback_terms(self):
+        primary, fallback = files._everything_query(Path(r"D:\\"), "总结 与 计划", "directory")
+        self.assertEqual(primary, "folder:总结 与 计划")
+        self.assertEqual(fallback, "folder:总结 与 计划")
 
     def test_everything_result_path_cannot_escape_d(self):
         config = replace(self.config, read_root=Path(r"D:\\"))

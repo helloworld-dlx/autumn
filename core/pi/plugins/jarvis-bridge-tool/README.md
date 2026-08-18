@@ -24,7 +24,7 @@ observational and **CAPABILITY != AUTHORIZATION**.
 | `jarvis_system_info` | `{}` | `system.info` |
 | `jarvis_system_status` | `{}` | `system.status` |
 | `jarvis_list_directory` | `{ path: "D:\\dir" }` | `files.list_directory` |
-| `jarvis_search_files` | `{ path, query, kind?, extensions? }` | `files.search` |
+| `jarvis_search_files` | `{ path, query, kind?, max_results? }` | `files.search` |
 
 `path` must start with `D:\` (case-insensitive, Windows-style). Any other drive
 letter, UNC path, device path, or URL is rejected before the Bridge call.
@@ -32,6 +32,8 @@ letter, UNC path, device path, or URL is rejected before the Bridge call.
 `query` (search_files) must be 1–200 chars and contain no NUL, `/`, `\`, or `:`.
 `extensions` items must start with `.` and there must be at most 20.
 `kind` must be one of `file`, `directory`, `any`.
+
+`path` is the recursive search root. The formal tool schema uses `path` and `query`; legacy `root`/`pattern` aliases are internal-only compatibility and are not exposed to the model.
 
 ## Hard rules enforced in code
 

@@ -296,9 +296,10 @@ const DirectoryParams = Type.Object(
 
 const SearchParams = Type.Object(
   {
-    root: Type.String(),
-    pattern: Type.String(),
-    max_results: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+    path: Type.String(),
+    query: Type.String(),
+    kind: Type.Optional(Type.Union([Type.Literal("file"), Type.Literal("directory")])),
+    max_results: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
   },
   { additionalProperties: false }
 );
@@ -692,14 +693,16 @@ export async function execListDirectory(params, _config, deps) {
 }
 
 export async function execSearchFiles(params, _config, deps) {
-  // User-visible schema is { root, pattern, max_results? } — we map to
-  // Bridge/Runner's { path, query, max_results }. max_results is clamped
-  // to [1, 50] because Runner rejects anything larger.
+  // User-visible schema is { path, query, kind?, max_results? }. Keep the
+  // old root/pattern aliases only for direct internal callers; the registered
+  // tool schema intentionally exposes only the new names.
+  const path = params.path ?? params.root;
+  const query = params.query ?? params.pattern;
   const requested = typeof params.max_results === "number" ? params.max_results : SEARCH_MAX_RESULTS;
   const clampedMax = Math.max(1, Math.min(SEARCH_MAX_RESULTS, Math.floor(requested)));
   const out = await callBridge(
     "files.search",
-    { path: params.root, query: params.pattern, max_results: clampedMax },
+    { path, query, ...(params.kind ? { kind: params.kind } : {}), max_results: clampedMax },
     deps || {},
   );
   if (!out.ok) {
@@ -708,11 +711,18 @@ export async function execSearchFiles(params, _config, deps) {
       bridgeMessage: out.bridgeMessage,
     });
   }
+  if (out.payload && out.payload.status && out.payload.status !== "success") {
+    return failResult(out.payload.error_code || "runner_rejected", {
+      bridgeError: out.payload.error_code || "runner_rejected",
+      bridgeMessage: out.payload.message || "Windows Runner rejected the search",
+    });
+  }
   const payload = (out.payload && out.payload.result) || {};
   return okResult({
     bridge_status: out.status,
-    root: params.root,
-    pattern: params.pattern,
+    path,
+    query,
+    ...(params.kind ? { kind: params.kind } : {}),
     matches: Array.isArray(payload.matches)
       ? payload.matches
       : Array.isArray(payload.items)

@@ -83,7 +83,7 @@ Use when the user asks Autumn to turn **content generated in the current turn** 
 列出 D 盘允许目录。只读。
 
 ### `jarvis_search_files`
-Search D: filename/path metadata only. Production D: search uses an Everything ES fixed-argv backend; every returned path is revalidated under the requested D: subtree. No content search, no caller ES flags, and search never auto-sends a file.
+Search D: filename/path metadata only. `path` is the recursive search root; production D: search uses an Everything ES fixed-argv backend with a bounded `file:`/`folder:` qualifier, and every returned path is revalidated under the requested D: subtree. No content search, no caller ES flags, and search never auto-sends a file.
 
 ### `jarvis_program_list`
 查看当前允许执行的白名单程序。

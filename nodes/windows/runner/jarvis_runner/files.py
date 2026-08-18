@@ -195,13 +195,14 @@ def _production_d_search(root: Path, config: RunnerConfig) -> bool:
     return True
 
 
-def _everything_query(root: Path, query: str) -> tuple[str, str | None]:
+def _everything_query(root: Path, query: str, kind: str) -> tuple[str, str | None]:
     if any(character in _EVERYTHING_LITERAL_FORBIDDEN for character in query):
         raise ValueError("invalid query")
-    # ES 1.1 treats a drive term as a root-only path on this runtime.  Keep
-    # the ES expression filename-only and enforce the requested D: subtree
-    # after the query, before metadata is returned.
-    primary = query
+    # Keep the search rooted by post-validating every result under ``root``.
+    # Qualify the backend query by kind so a small bounded ES result window is
+    # not filled by unrelated files before matching directories (or vice versa).
+    kind_term = {"file": "file:", "directory": "folder:"}.get(kind, "")
+    primary = f"{kind_term}{query}"
     words = tuple(word for word in query.split() if word)
     if len(words) > 1:
         fallback_terms = words
@@ -210,7 +211,7 @@ def _everything_query(root: Path, query: str) -> tuple[str, str | None]:
         fallback_terms = (query[:midpoint], query[midpoint:])
     else:
         fallback_terms = ()
-    fallback = " ".join(fallback_terms) if fallback_terms else None
+    fallback = f"{kind_term}{' '.join(fallback_terms)}" if fallback_terms else None
     return primary, fallback
 
 
@@ -239,7 +240,7 @@ def _everything_item(path_text: str, root: Path, config: RunnerConfig) -> dict |
 def _everything_search(root: Path, query: str, kind: str, extensions: set[str] | None, max_results: int, deadline: float, config: RunnerConfig) -> dict:
     if EVERYTHING_EXECUTABLE_PATH is None or not EVERYTHING_EXECUTABLE_PATH.is_file():
         raise RunnerError("EVERYTHING_UNAVAILABLE", "D: filename search backend is unavailable")
-    primary, fallback = _everything_query(root, query)
+    primary, fallback = _everything_query(root, query, kind)
     result = _base(root); started = time.monotonic(); result_limit = min(max_results, _EVERYTHING_RESULT_LIMIT)
     for search_text in (primary, fallback):
         if search_text is None:

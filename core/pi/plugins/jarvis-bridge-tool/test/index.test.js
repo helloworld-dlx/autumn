@@ -15,6 +15,7 @@ import pluginEntry, {
   execAutumnFileReturn,
   execAutumnCompanionArtifact,
   execPing,
+  execSearchFiles,
 } from "../dist/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -179,4 +180,39 @@ test("existing read-only ping remains a single Bridge request", async () => {
   assert.equal(result.details.ok, true);
   assert.equal(mock.calls.length, 1);
   assert.equal(mock.calls[0].init.method, "POST");
+});
+
+test("jarvis_search_files exposes path/query/kind and forwards the exact contract", async () => {
+  const api = loadPlugin();
+  const tool = api.registeredTools.find((entry) => entry.tool.name === "jarvis_search_files").tool;
+  assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ["kind", "max_results", "path", "query"]);
+  assert.equal(tool.parameters.additionalProperties, false);
+  assert.equal(tool.parameters.properties.root, undefined);
+  assert.equal(tool.parameters.properties.pattern, undefined);
+
+  const mock = fakeFetch([jsonResponse(200, { status: "success", result: { items: [{ path: "D:\\\\Study\\\\总结与计划", kind: "directory" }], returned_count: 1 } })]);
+  const result = await execSearchFiles({ path: "D:\\\\", query: "总结与计划", kind: "directory", max_results: 7 }, {}, { fetch: mock.fetch });
+  assert.equal(result.details.bridge_status, 200);
+  assert.deepEqual(JSON.parse(mock.calls[0].init.body), {
+    action: "files.search",
+    arguments: { path: "D:\\\\", query: "总结与计划", kind: "directory", max_results: 7 },
+  });
+});
+
+test("jarvis_search_files forwards file kind and keeps internal root/pattern compatibility", async () => {
+  const mock = fakeFetch([
+    jsonResponse(200, { status: "success", result: { items: [], returned_count: 0 } }),
+    jsonResponse(200, { status: "success", result: { items: [], returned_count: 0 } }),
+  ]);
+  await execSearchFiles({ path: "D:\\\\", query: "note.txt", kind: "file", max_results: 3 }, {}, { fetch: mock.fetch });
+  assert.deepEqual(JSON.parse(mock.calls[0].init.body).arguments, { path: "D:\\\\", query: "note.txt", kind: "file", max_results: 3 });
+  await execSearchFiles({ root: "D:\\\\", pattern: "legacy" }, {}, { fetch: mock.fetch });
+  assert.deepEqual(JSON.parse(mock.calls[1].init.body).arguments, { path: "D:\\\\", query: "legacy", max_results: 50 });
+});
+
+test("jarvis_search_files surfaces Runner path rejection instead of returning an empty success", async () => {
+  const mock = fakeFetch([jsonResponse(200, { status: "rejected", error_code: "PATH_NOT_ALLOWED", message: "path is not allowed" })]);
+  const result = await execSearchFiles({ path: "C:\\\\", query: "Windows", kind: "file" }, {}, { fetch: mock.fetch });
+  assert.equal(result.details.status, "failed");
+  assert.equal(result.details.bridgeError, "PATH_NOT_ALLOWED");
 });

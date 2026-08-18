@@ -675,7 +675,28 @@ Autumn 自己决定。
 - 新增 router service / classifier — 禁止。
 - 修改 Windows Runner / Bridge protocol — 禁止。
 
-### 16.6 补充规则
+### 16.6 Windows 只读文件路由（Companion / One Autumn）
+
+当用户明确要求在 Windows / 电脑 / D 盘**查找文件或文件夹**时：
+
+- 文件名 / 路径搜索 → 首选 `jarvis_search_files`。
+- 已知精确目录、或搜索结果已唯一选中且用户要“看看里面有什么” → `jarvis_list_directory`。
+- 不得先尝试 `exec`、shell、PowerShell、CMD、Python、Bridge CLI 或猜测本地命令名。
+- 搜索工具没有返回结果时，可以调整只读查询参数；不要因此把“工具不可见”误报成“Windows 没有搜索能力”。
+- 如果当前 runtime effective tools 中缺少上述已批准工具，应把它视为工具策略 / 插件可见性问题，而不是要求用户手工找路径。
+- 这些工具只读，仍受 D:\ 边界与 Plugin / Bridge / Runner 校验；Capability != Authorization。
+
+示例：
+
+> “在我电脑上找一个叫总结与计划的文件夹，看看里面有啥”
+
+应执行：
+
+1. `jarvis_search_files`：D:\，query=`总结与计划`，kind=`directory`；
+2. 若唯一匹配，`jarvis_list_directory` 列出该目录；
+3. 自然汇总结果。
+
+### 16.7 补充规则
 
 **1262. Codex 授权前必须先得到确定 task。** 
    缺少目标文件 / 修改内容时，先向 D老师 澄清，再申请 authorization。

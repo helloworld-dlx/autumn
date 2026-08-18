@@ -556,6 +556,77 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertNotIn('\r', header)
         self.assertNotIn('\n', header)
 
+    def test_remote_vision_cast_signaling_is_ephemeral_and_role_scoped(self):
+        with bridge.VISION_CASTS_LOCK:
+            bridge.VISION_CASTS.clear()
+        try:
+            created = bridge.create_vision_cast("Xiaomi 15 · Rear Camera")
+            cast_id = created["id"]
+            self.assertTrue(cast_id.startswith("vc_"))
+            self.assertEqual(bridge.list_vision_casts()[0]["label"], "Xiaomi 15 · Rear Camera")
+            seq = bridge.push_vision_signal(cast_id, "viewer", "offer", {"type": "offer", "sdp": "demo"})
+            self.assertEqual(seq, 1)
+            sender = bridge.poll_vision_signals(cast_id, "sender", 0)
+            self.assertEqual(sender["events"][0]["type"], "offer")
+            self.assertEqual(sender["events"][0]["role"], "viewer")
+            viewer = bridge.poll_vision_signals(cast_id, "viewer", 0)
+            self.assertEqual(viewer["events"], [])
+            self.assertTrue(bridge.close_vision_cast(cast_id))
+            self.assertEqual(bridge.list_vision_casts(), [])
+        finally:
+            with bridge.VISION_CASTS_LOCK:
+                bridge.VISION_CASTS.clear()
+
+    def test_conversation_archive_restore_protects_main_and_keeps_session(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "conversation_ui_state.json"
+            result = bridge.process_archive_conversation("c_cleanup", "Eyes smoke test", state_path)
+            self.assertEqual(result, {"ok": True, "archived": "c_cleanup"})
+            self.assertIn("c_cleanup", bridge._read_conversation_ui_state(state_path))
+            self.assertEqual(bridge.process_restore_conversation("c_cleanup", state_path), {"ok": True, "restored": "c_cleanup"})
+            self.assertNotIn("c_cleanup", bridge._read_conversation_ui_state(state_path))
+            with self.assertRaises(bridge.BridgeError) as ctx:
+                bridge.process_archive_conversation("main", "Main", state_path)
+            self.assertEqual(ctx.exception.code, "MAIN_CONVERSATION_PROTECTED")
+
+    def test_archived_conversation_is_hidden_from_default_and_visible_in_archive_list(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "conversation_ui_state.json"
+            bridge.process_archive_conversation("c_hidden", "smoke", state_path)
+            rows = lambda: [{"id": "main", "label": "Main"}, {"id": "c_hidden", "label": "smoke"}]
+            self.assertEqual([item["id"] for item in bridge.process_conversations(rows, ui_state_path=state_path)["conversations"]], ["main"])
+            self.assertEqual([item["id"] for item in bridge.process_conversations(rows, ui_state_path=state_path, archived_only=True)["conversations"]], ["c_hidden"])
+            self.assertNotIn("transcript", state_path.read_text("utf-8"))
+
+    def test_barge_intent_requires_explicit_interrupt_language(self):
+        self.assertTrue(bridge.barge_intent_from_transcript("等等，先停一下"))
+        self.assertTrue(bridge.barge_intent_from_transcript("Autumn 换个问题"))
+        self.assertTrue(bridge.barge_intent_from_transcript("change the topic"))
+        self.assertFalse(bridge.barge_intent_from_transcript("不对，我觉得这里应该这样"))
+        self.assertFalse(bridge.barge_intent_from_transcript("我跟他说晚点吃饭"))
+
+    def test_process_barge_intent_is_deterministic_after_stt(self):
+        result = bridge.process_barge_intent(
+            b"audio", "barge.webm", "audio/webm",
+            stt=lambda *_: "等一下",
+        )
+        self.assertEqual(result, {"interrupt": True, "transcript": "等一下"})
+
+    def test_ui_hints_are_tool_driven_and_deduplicated(self):
+        traces = [
+            {"phase": "start", "tool": "jarvis_search_files"},
+            {"phase": "result", "tool": "jarvis_search_files"},
+            {"phase": "result", "tool": "autumn_nodes"},
+        ]
+        self.assertEqual(bridge.ui_hints_from_activity(traces), ["files", "status"])
+        self.assertEqual(bridge.ui_hints_from_activity([], [{"fileName": "report.md"}]), ["files"])
+
+    def test_effective_tools_diagnostic_and_barge_routes_exist(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn('"/api/diagnostics/effective-tools"', source)
+        self.assertIn('"/api/barge-intent"', source)
+        self.assertIn('"action": "effective_tools"', source)
+
     def test_companion_status_proxy_is_safe(self):
         class Response:
             status = 200

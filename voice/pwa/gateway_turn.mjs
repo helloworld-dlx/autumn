@@ -32,6 +32,28 @@ const client = new GatewayClient({
   },
 });
 
+
+async function effectiveToolNames(sessionKey) {
+  const result = await client.request("tools.effective", { sessionKey });
+  const groupedTools = Array.isArray(result?.groups)
+    ? result.groups.flatMap((group) => Array.isArray(group?.tools) ? group.tools : [])
+    : [];
+  const rows = Array.isArray(result?.tools)
+    ? result.tools
+    : Array.isArray(result?.items)
+      ? result.items
+      : Array.isArray(result)
+        ? result
+        : groupedTools;
+  return rows.flatMap((tool) => {
+    if (typeof tool === "string" && tool.trim()) return [tool.trim()];
+    const name = typeof tool?.name === "string"
+      ? tool.name.trim()
+      : typeof tool?.id === "string" ? tool.id.trim() : "";
+    return name ? [name] : [];
+  }).slice(0, 240);
+}
+
 function visibleText(message) {
   if (!message || typeof message !== "object") return "";
   const content = message.content;
@@ -284,7 +306,8 @@ async function loadCompanionSessions() {
     const label = firstString(session.label, session.title, session.derivedTitle);
     const preview = firstString(session.preview).slice(0, 160);
     const updatedAt = firstString(session.updatedAt, session.lastActivityAt, session.createdAt);
-    return [{ id, key, label, preview, updatedAt }];
+    const createdAt = firstString(session.createdAt);
+    return [{ id, key, label, preview, updatedAt, createdAt }];
   });
 }
 
@@ -310,6 +333,12 @@ for await (const line of lines) {
     if (request.action === "sessions") {
       const sessions = await loadCompanionSessions();
       process.stdout.write(`${JSON.stringify({ ok: true, sessions })}\n`);
+      continue;
+    }
+    if (request.action === "effective_tools") {
+      const canonicalSessionKey = `agent:main:${request.sessionKey}`;
+      const tools = await effectiveToolNames(canonicalSessionKey);
+      process.stdout.write(`${JSON.stringify({ ok: true, tools })}\n`);
       continue;
     }
     if (typeof request.message !== "string" || !["chat", "voice"].includes(request.source)) throw new Error("INVALID_REQUEST");

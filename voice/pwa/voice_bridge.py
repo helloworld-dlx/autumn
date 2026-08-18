@@ -31,6 +31,7 @@ MEDIA = ROOT / "media"
 GATEWAY_HELPER = ROOT / "gateway_turn.mjs"
 TTS_STREAM_HELPER = ROOT / "minimax_tts_stream.mjs"
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
+MAX_BARGE_INTENT_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 16 * 1024  # text only
 MAX_CHAT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 MAX_CHAT_ATTACHMENT_TOTAL_BYTES = 12 * 1024 * 1024
@@ -65,6 +66,16 @@ CONVERSATION_TITLES_PATH = Path(os.environ.get(
 CONVERSATION_TITLES_LOCK = threading.Lock()
 MAX_CONVERSATION_TITLE_RECORDS = 500
 MAX_CONVERSATION_TITLE_CHARS = 30
+CONVERSATION_UI_STATE_PATH = Path(os.environ.get(
+    "AUTUMN_COMPANION_UI_STATE_PATH",
+    str(Path.home() / ".openclaw" / "conversation_ui_state.json"),
+))
+CONVERSATION_UI_STATE_LOCK = threading.Lock()
+MAX_ARCHIVED_CONVERSATIONS = 500
+VISION_CAST_TTL_SECONDS = 10 * 60
+VISION_CAST_MAX_EVENTS = 120
+VISION_CASTS: dict[str, dict[str, object]] = {}
+VISION_CASTS_LOCK = threading.Lock()
 PRESENCE_DEVICE_RE = re.compile(r"(?:电脑|Windows|设备)", re.IGNORECASE)
 PRESENCE_STATUS_RE = re.compile(r"(?:在线|离线|在不在线|是否连接|连着|连接)", re.IGNORECASE)
 
@@ -183,6 +194,98 @@ def conversation_key(conversation_id: str | None) -> str:
     """Map a stable Companion conversation identity to its Gateway key."""
     safe = re.sub(r"[^A-Za-z0-9_-]", "", conversation_id or "")[:80]
     return f"companion:{safe or MAIN_CONVERSATION_ID}"
+
+
+def _prune_vision_casts(now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    stale = [
+        cast_id for cast_id, item in VISION_CASTS.items()
+        if now - float(item.get("updated", item.get("created", now))) > VISION_CAST_TTL_SECONDS
+    ]
+    for cast_id in stale:
+        VISION_CASTS.pop(cast_id, None)
+
+
+def create_vision_cast(label: str) -> dict[str, object]:
+    clean = re.sub(r"\s+", " ", str(label or "")).strip()[:60] or "Phone Camera"
+    cast_id = "vc_" + uuid.uuid4().hex[:18]
+    now = time.monotonic()
+    with VISION_CASTS_LOCK:
+        _prune_vision_casts(now)
+        VISION_CASTS[cast_id] = {
+            "id": cast_id,
+            "label": clean,
+            "created": now,
+            "updated": now,
+            "seq": 0,
+            "events": [],
+        }
+    return {"id": cast_id, "label": clean}
+
+
+def list_vision_casts() -> list[dict[str, object]]:
+    now = time.monotonic()
+    with VISION_CASTS_LOCK:
+        _prune_vision_casts(now)
+        return [
+            {
+                "id": cast_id,
+                "label": str(item.get("label") or "Phone Camera"),
+                "ageMs": max(0, int((now - float(item.get("created", now))) * 1000)),
+            }
+            for cast_id, item in VISION_CASTS.items()
+        ]
+
+
+def push_vision_signal(cast_id: str, role: str, signal_type: str, payload: object) -> int:
+    if role not in {"sender", "viewer"}:
+        raise BridgeError("VISION_SIGNAL_INVALID", "Invalid vision signal role", 400)
+    if signal_type not in {"offer", "answer", "ice", "hello"}:
+        raise BridgeError("VISION_SIGNAL_INVALID", "Invalid vision signal type", 400)
+    if len(json.dumps(payload, ensure_ascii=False)) > 32_000:
+        raise BridgeError("VISION_SIGNAL_TOO_LARGE", "Vision signal is too large", 413)
+    now = time.monotonic()
+    with VISION_CASTS_LOCK:
+        _prune_vision_casts(now)
+        item = VISION_CASTS.get(cast_id)
+        if item is None:
+            raise BridgeError("VISION_CAST_NOT_FOUND", "Remote camera is no longer available", 404)
+        seq = int(item.get("seq", 0)) + 1
+        item["seq"] = seq
+        item["updated"] = now
+        events = item.setdefault("events", [])
+        assert isinstance(events, list)
+        events.append({"seq": seq, "role": role, "type": signal_type, "payload": payload})
+        if len(events) > VISION_CAST_MAX_EVENTS:
+            del events[:-VISION_CAST_MAX_EVENTS]
+        return seq
+
+
+def poll_vision_signals(cast_id: str, target_role: str, after: int) -> dict[str, object]:
+    if target_role not in {"sender", "viewer"}:
+        raise BridgeError("VISION_SIGNAL_INVALID", "Invalid vision signal target", 400)
+    now = time.monotonic()
+    with VISION_CASTS_LOCK:
+        _prune_vision_casts(now)
+        item = VISION_CASTS.get(cast_id)
+        if item is None:
+            raise BridgeError("VISION_CAST_NOT_FOUND", "Remote camera is no longer available", 404)
+        item["updated"] = now
+        events = item.get("events")
+        if not isinstance(events, list):
+            events = []
+        visible = [
+            event for event in events
+            if isinstance(event, dict)
+            and int(event.get("seq", 0)) > after
+            and event.get("role") != target_role
+        ]
+        return {"events": visible, "latestSeq": int(item.get("seq", 0))}
+
+
+def close_vision_cast(cast_id: str) -> bool:
+    with VISION_CASTS_LOCK:
+        return VISION_CASTS.pop(cast_id, None) is not None
 
 
 class GatewayTurnClient:
@@ -307,6 +410,24 @@ class GatewayTurnClient:
             raise RuntimeError(str(result.get("error") or "Gateway sessions unavailable"))
         return sessions
 
+
+    def effective_tools(self, conversation_id: str = MAIN_CONVERSATION_ID) -> list[str]:
+        key = conversation_key(conversation_id)
+        with self.lock:
+            process = self._start()
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("Gateway helper pipes unavailable")
+            process.stdin.write(json.dumps({"action": "effective_tools", "sessionKey": key}) + "\n")
+            process.stdin.flush()
+            line = process.stdout.readline()
+            if not line:
+                self.process = None
+                raise RuntimeError("Gateway helper stopped")
+        result = json.loads(line)
+        tools = result.get("tools")
+        if not result.get("ok") or not isinstance(tools, list):
+            raise RuntimeError(str(result.get("code") or result.get("error") or "Gateway effective tools unavailable"))
+        return [str(name) for name in tools if isinstance(name, str)]
 
 GATEWAY = GatewayTurnClient()
 
@@ -527,6 +648,60 @@ def fail_closed_presence_reply(query: str, reply: str, traces: list[dict[str, ob
     return reply
 
 
+STATUS_UI_TOOLS = {
+    "autumn_nodes", "jarvis_ping", "jarvis_system_info", "jarvis_system_status",
+    "worker_control_status", "worker_submit", "worker_result",
+}
+FILES_UI_TOOLS = {
+    "jarvis_search_files", "jarvis_list_directory", "autumn_file_return",
+    "autumn_companion_artifact",
+}
+
+
+def ui_hints_from_activity(traces: list[dict[str, object]],
+                           reply_attachments: list[dict[str, object]] | None = None) -> list[str]:
+    """Map real tool lifecycle evidence to a small stable spatial presentation hint set."""
+    hints: list[str] = []
+    for trace in traces:
+        if not isinstance(trace, dict) or trace.get("phase") not in {"start", "result"}:
+            continue
+        tool = trace.get("tool")
+        if tool in FILES_UI_TOOLS and "files" not in hints:
+            hints.append("files")
+        elif tool in STATUS_UI_TOOLS and "status" not in hints:
+            hints.append("status")
+    if reply_attachments and "files" not in hints:
+        hints.append("files")
+    return hints[:3]
+
+
+BARGE_WAKE_RE = re.compile(r"(?:\bautumn\b|秋(?:天)?[，,、\s]*)", re.IGNORECASE)
+BARGE_STRONG_RE = re.compile(
+    r"(?:等等|等一下|等会(?:儿)?|停一下|先停|先别说|别说了|打断一下|"
+    r"换个问题|换一个问题|换个话题|换一个话题|换题|"
+    r"\bwait\b|\bhold on\b|\bstop\b|\bpause\b|"
+    r"\bchange (?:the )?(?:topic|question)\b|\bnew question\b)",
+    re.IGNORECASE,
+)
+
+
+def barge_intent_from_transcript(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not normalized:
+        return False
+    # "不对" alone is deliberately not enough; it is common background speech.
+    return bool(BARGE_WAKE_RE.search(normalized) or BARGE_STRONG_RE.search(normalized))
+
+
+def process_barge_intent(audio: bytes, filename: str, mime: str, stt=siliconflow_transcribe) -> dict[str, object]:
+    if not audio:
+        raise BridgeError("AUDIO_REQUIRED", "Upload one interruption candidate", 400)
+    if len(audio) > MAX_BARGE_INTENT_BYTES:
+        raise BridgeError("BARGE_INTENT_TOO_LARGE", "Interruption candidate exceeds 2 MiB", 413)
+    transcript = stt(audio, filename, mime)
+    return {"interrupt": barge_intent_from_transcript(transcript), "transcript": transcript}
+
+
 def cleanup_audio() -> None:
     cutoff = time.monotonic() - AUDIO_TTL_SECONDS
     for token, (path, created) in list(AUDIOS.items()):
@@ -656,6 +831,76 @@ def load_conversation_title(conversation_id: str, path: Path = CONVERSATION_TITL
     return value.strip() if isinstance(value, str) else ""
 
 
+def _read_conversation_ui_state(path: Path = CONVERSATION_UI_STATE_PATH) -> dict[str, dict[str, object]]:
+    if not path.exists() or path.is_symlink():
+        return {}
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("archived"), dict):
+        return {}
+    archived: dict[str, dict[str, object]] = {}
+    for conversation_id, item in payload["archived"].items():
+        if not isinstance(conversation_id, str) or conversation_id == MAIN_CONVERSATION_ID or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", conversation_id) or not isinstance(item, dict):
+            continue
+        archived_at, title = item.get("archivedAt"), item.get("title")
+        if isinstance(archived_at, int):
+            archived[conversation_id] = {"archivedAt": archived_at, "title": str(title or "")[:MAX_CONVERSATION_TITLE_CHARS + 1]}
+    return archived
+
+
+def _write_conversation_ui_state(archived: dict[str, dict[str, object]], path: Path = CONVERSATION_UI_STATE_PATH) -> None:
+    parent = path.parent
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.exists() and path.is_symlink():
+        raise OSError("conversation UI state path must not be a symlink")
+    temp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=parent, prefix=path.name + ".", delete=False) as handle:
+            temp_name = handle.name
+            json.dump({"archived": archived}, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush(); os.fsync(handle.fileno())
+        if os.name != "nt":
+            os.chmod(temp_name, 0o600)
+        os.replace(temp_name, path)
+    finally:
+        if temp_name:
+            try:
+                Path(temp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def process_archive_conversation(conversation_id: str, title: object = "", path: Path = CONVERSATION_UI_STATE_PATH) -> dict[str, object]:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", conversation_id or "")[:80]
+    if not safe or safe != conversation_id:
+        raise BridgeError("CONVERSATION_INVALID", "Conversation id is invalid", 400)
+    if safe == MAIN_CONVERSATION_ID:
+        raise BridgeError("MAIN_CONVERSATION_PROTECTED", "Main cannot be archived", 409)
+    with CONVERSATION_UI_STATE_LOCK:
+        archived = _read_conversation_ui_state(path)
+        archived[safe] = {"archivedAt": int(time.time()), "title": str(title or "")[:MAX_CONVERSATION_TITLE_CHARS + 1]}
+        if len(archived) > MAX_ARCHIVED_CONVERSATIONS:
+            oldest = min(archived, key=lambda key: int(archived[key].get("archivedAt", 0)))
+            archived.pop(oldest, None)
+        _write_conversation_ui_state(archived, path)
+    return {"ok": True, "archived": safe}
+
+
+def process_restore_conversation(conversation_id: str, path: Path = CONVERSATION_UI_STATE_PATH) -> dict[str, object]:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", conversation_id or "")[:80]
+    if not safe or safe != conversation_id:
+        raise BridgeError("CONVERSATION_INVALID", "Conversation id is invalid", 400)
+    if safe == MAIN_CONVERSATION_ID:
+        raise BridgeError("MAIN_CONVERSATION_PROTECTED", "Main cannot be restored", 409)
+    with CONVERSATION_UI_STATE_LOCK:
+        archived = _read_conversation_ui_state(path)
+        archived.pop(safe, None)
+        _write_conversation_ui_state(archived, path)
+    return {"ok": True, "restored": safe}
+
+
 def process_turn(audio: bytes, filename: str, mime: str, requested_conversation: str | None,
                  stt=siliconflow_transcribe, autumn=autumn_turn, tts=minimax_tts,
                  title_path: Path = CONVERSATION_TITLES_PATH, new_conversation: bool = False,
@@ -701,6 +946,7 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_conversation:
         "replyAttachments": _safe_attachment_metadata(reply_attachments),
         "audioUrl": audio_url,
         "toolTrace": tool_trace,
+        "uiHints": ui_hints_from_activity(tool_trace, reply_attachments),
         "latencyMs": {"stt": stt_ms, "autumn": autumn_ms, "tts": total_ms - stt_ms - autumn_ms, "total": total_ms},
     }
 
@@ -740,8 +986,15 @@ def process_turn_stream(audio: bytes, filename: str, mime: str, requested_conver
         if streamed and not presence_query:
             emit({"type": "text", "text": streamed, "latencyMs": {"firstText": first_text_ms}})
 
+    emitted_ui_hints: set[str] = set()
+
     def on_trace(trace: dict[str, object]) -> None:
         tool_trace.append(trace)
+        for hint in ui_hints_from_activity([trace]):
+            if hint in emitted_ui_hints:
+                continue
+            emitted_ui_hints.add(hint)
+            emit({"type": "ui", "present": [hint]})
 
     if supports_on_trace(autumn_stream):
         reply = autumn_stream(transcript, key, on_delta, on_trace=on_trace)
@@ -800,6 +1053,7 @@ def process_turn_stream(audio: bytes, filename: str, mime: str, requested_conver
         "reply": reply,
         "replyAttachments": _safe_attachment_metadata(reply_attachments),
         "toolTrace": tool_trace,
+        "uiHints": ui_hints_from_activity(tool_trace, reply_attachments),
         "latencyMs": {
             "stt": stt_ms,
             "firstText": first_text_ms,
@@ -1028,6 +1282,7 @@ def process_chat(message: object, requested_conversation: str | None, attachment
         "reply": reply,
         "replyAttachments": _safe_attachment_metadata(reply_attachments),
         "toolTrace": tool_trace,
+        "uiHints": ui_hints_from_activity(tool_trace, reply_attachments),
         "latencyMs": round((time.monotonic() - started) * 1000),
     }
     if metadata_stored is not None:
@@ -1075,13 +1330,16 @@ def _session_title(session: dict[str, object], conversation_id: str, local_title
     return "新对话"
 
 
-def process_conversations(sessions=GATEWAY.sessions, title_path: Path = CONVERSATION_TITLES_PATH) -> dict[str, object]:
+def process_conversations(sessions=GATEWAY.sessions, title_path: Path = CONVERSATION_TITLES_PATH,
+                          ui_state_path: Path = CONVERSATION_UI_STATE_PATH, archived_only: bool = False) -> dict[str, object]:
     try:
         raw_sessions = sessions()
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         raise BridgeError("CONVERSATIONS_UNAVAILABLE", "Conversation list is unavailable", 502) from exc
     with CONVERSATION_TITLES_LOCK:
         local_titles = _read_conversation_titles(title_path)
+    with CONVERSATION_UI_STATE_LOCK:
+        archived = _read_conversation_ui_state(ui_state_path)
     items: list[dict[str, object]] = []
     seen: set[str] = set()
     for session in raw_sessions:
@@ -1093,6 +1351,11 @@ def process_conversations(sessions=GATEWAY.sessions, title_path: Path = CONVERSA
         if conversation_id in seen:
             continue
         seen.add(conversation_id)
+        is_archived = conversation_id in archived
+        if archived_only and conversation_id == MAIN_CONVERSATION_ID:
+            continue
+        if conversation_id != MAIN_CONVERSATION_ID and is_archived != archived_only:
+            continue
         items.append({
             "id": conversation_id,
             "title": _session_title(
@@ -1102,12 +1365,22 @@ def process_conversations(sessions=GATEWAY.sessions, title_path: Path = CONVERSA
             ),
             "preview": session.get("preview") if isinstance(session.get("preview"), str) else "",
             "updatedAt": session.get("updatedAt") if isinstance(session.get("updatedAt"), str) else "",
+            "archived": is_archived,
         })
-    if MAIN_CONVERSATION_ID not in seen:
-        items.insert(0, {"id": MAIN_CONVERSATION_ID, "title": "Main", "preview": "", "updatedAt": ""})
-    else:
+    if not archived_only and MAIN_CONVERSATION_ID not in seen:
+        items.insert(0, {"id": MAIN_CONVERSATION_ID, "title": "Main", "preview": "", "updatedAt": "", "archived": False})
+    elif not archived_only:
         items.sort(key=lambda item: item["id"] != MAIN_CONVERSATION_ID)
     return {"conversations": items}
+
+
+def remove_conversation_title(conversation_id: str, title_path: Path = CONVERSATION_TITLES_PATH) -> None:
+    key = conversation_key(conversation_id)
+    with CONVERSATION_TITLES_LOCK:
+        data = _read_conversation_titles(title_path)
+        if key in data:
+            data.pop(key, None)
+            _write_conversation_titles(data, title_path)
 
 
 def _validated_chat_attachments(value: object) -> list[dict[str, object]]:
@@ -1358,14 +1631,48 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self.send_json(200, {"ok": True, "listen": "loopback"})
             return
-        if self.path == "/api/conversations":
+        parsed = urlsplit(self.path)
+        if parsed.path == "/api/conversations":
             try:
-                self.send_json(200, process_conversations())
+                archived_only = parse_qs(parsed.query).get("archived", [""])[0] == "1"
+                self.send_json(200, process_conversations(archived_only=archived_only))
             except BridgeError as exc:
                 self.send_json(exc.status, {"error": exc.code, "message": exc.message})
             return
+        if parsed.path == "/api/conversation-ui-state":
+            with CONVERSATION_UI_STATE_LOCK:
+                archived = _read_conversation_ui_state()
+            self.send_json(200, {"archived": archived})
+            return
+        if self.path.startswith("/api/diagnostics/effective-tools"):
+            try:
+                query = parse_qs(urlsplit(self.path).query)
+                requested = query.get("conversationId", [MAIN_CONVERSATION_ID])[0]
+                safe = re.sub(r"[^A-Za-z0-9_-]", "", requested or "")[:80] or MAIN_CONVERSATION_ID
+                tools = GATEWAY.effective_tools(safe)
+                approved = ["jarvis_search_files", "jarvis_list_directory", "jarvis_system_status", "autumn_nodes"]
+                self.send_json(200, {"conversationId": safe, "tools": tools, "approvedWindowsTools": {name: name in tools for name in approved}})
+            except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+                self.send_json(502, {"error": "EFFECTIVE_TOOLS_UNAVAILABLE", "message": str(exc)[:160]})
+            return
         parsed = urlsplit(self.path)
         request_path = parsed.path
+        if request_path == "/api/vision/casts":
+            self.send_json(200, {"casts": list_vision_casts()})
+            return
+        signal_match = re.fullmatch(r"/api/vision/casts/(vc_[A-Fa-f0-9]{18})/signals", request_path)
+        if signal_match:
+            query = parse_qs(parsed.query)
+            target = query.get("for", [""])[0]
+            try:
+                after = max(0, int(query.get("after", ["0"])[0]))
+                self.send_json(200, poll_vision_signals(signal_match.group(1), target, after))
+            except (ValueError, BridgeError) as exc:
+                if isinstance(exc, BridgeError):
+                    self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+                else:
+                    self.send_json(400, {"error": "VISION_SIGNAL_INVALID", "message": "Invalid signal cursor"})
+            return
         if request_path == "/api/companion/status":
             try:
                 payload = companion_status()
@@ -1461,6 +1768,38 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:
+        parsed = urlsplit(self.path)
+        request_path = parsed.path
+        if request_path == "/api/vision/casts":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 4096 or "application/json" not in self.headers.get("Content-Type", "").lower():
+                    raise BridgeError("INVALID_JSON", "JSON body required", 400)
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict) or set(payload) - {"label"}:
+                    raise BridgeError("INVALID_JSON", "Invalid vision cast request", 400)
+                self.send_json(201, create_vision_cast(str(payload.get("label") or "")))
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+            except json.JSONDecodeError:
+                self.send_json(400, {"error": "INVALID_JSON", "message": "Invalid JSON"})
+            return
+        signal_match = re.fullmatch(r"/api/vision/casts/(vc_[A-Fa-f0-9]{18})/signals", request_path)
+        if signal_match:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 36_000 or "application/json" not in self.headers.get("Content-Type", "").lower():
+                    raise BridgeError("INVALID_JSON", "JSON body required", 400)
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict) or set(payload) != {"role", "type", "payload"}:
+                    raise BridgeError("VISION_SIGNAL_INVALID", "Invalid vision signal", 400)
+                seq = push_vision_signal(signal_match.group(1), payload["role"], payload["type"], payload["payload"])
+                self.send_json(200, {"ok": True, "seq": seq})
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+            except json.JSONDecodeError:
+                self.send_json(400, {"error": "INVALID_JSON", "message": "Invalid JSON"})
+            return
         if self.path == "/api/presence/touch":
             touch_phone_presence()
             self.send_json(200, {"ok": True})
@@ -1481,6 +1820,20 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, json.JSONDecodeError):
                 self.send_json(500, {"error": "VISIBILITY_FAILED", "message": "File visibility update failed"})
             return
+        if self.path == "/api/barge-intent":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_BARGE_INTENT_BYTES + 65536:
+                    raise BridgeError("BARGE_INTENT_TOO_LARGE", "Interruption candidate exceeds 2 MiB", 413)
+                audio, name, mime, _requested, _new_conversation = parse_multipart(
+                    self.headers.get("Content-Type", ""), self.rfile.read(length)
+                )
+                self.send_json(200, process_barge_intent(audio, name, mime))
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+            except Exception:
+                self.send_json(500, {"error": "BARGE_INTENT_FAILED", "message": "Interruption intent check failed"})
+            return
         if self.path == "/api/chat":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -1496,6 +1849,27 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(exc.status, {"error": exc.code, "message": exc.message})
             except Exception:
                 self.send_json(500, {"error": "INTERNAL_ERROR", "message": "Chat failed"})
+            return
+        archive_match = re.fullmatch(r"/api/conversations/([A-Za-z0-9_-]{1,80})/(archive|restore)", request_path)
+        if archive_match:
+            try:
+                conversation_id, action = archive_match.groups()
+                title = ""
+                if action == "archive":
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 1024 or "application/json" not in self.headers.get("Content-Type", "").lower():
+                        raise BridgeError("INVALID_JSON", "Archive metadata required", 400)
+                    payload = json.loads(self.rfile.read(length))
+                    if not isinstance(payload, dict) or set(payload) != {"title"} or not isinstance(payload["title"], str):
+                        raise BridgeError("INVALID_JSON", "Archive title required", 400)
+                    title = payload["title"]
+                    self.send_json(200, process_archive_conversation(conversation_id, title))
+                else:
+                    self.send_json(200, process_restore_conversation(conversation_id))
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+            except (OSError, json.JSONDecodeError):
+                self.send_json(500, {"error": "CONVERSATION_UI_STATE_FAILED", "message": "Conversation archive update failed"})
             return
         if self.path == "/api/turn-stream":
             emit = None
@@ -1540,6 +1914,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(exc.status, {"error": exc.code, "message": exc.message})
         except Exception:
             self.send_json(500, {"error": "INTERNAL_ERROR", "message": "Voice Bridge failed"})
+
+
+    def do_DELETE(self) -> None:
+        parsed = urlsplit(self.path)
+        request_path = parsed.path
+        cast_match = re.fullmatch(r"/api/vision/casts/(vc_[A-Fa-f0-9]{18})", request_path)
+        if cast_match:
+            self.send_json(200, {"ok": True, "closed": close_vision_cast(cast_match.group(1))})
+            return
+        self.send_error(404)
 
 
 if __name__ == "__main__":
