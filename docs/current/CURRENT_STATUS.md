@@ -26,7 +26,7 @@
 **PHASE3C-2:** PASS / CLOSED / FROZEN — Voice stability priority: one early speech prefix per turn, non-overlapping final remainder, streaming fallback retained, and Presence responses fail closed without reliable `autumn_nodes` evidence. Exact Companion session and Fast Mode preserved; no provider instrumentation, fast path, permission expansion, or performance claim added.
 **PHASE3C-3:** PASS / CLOSED / FROZEN — Natural Barge-in accepted for Continuous Voice: browser-side duck/interrupt, generation invalidation, playback queue clearing, and same Companion conversation continuation. Streaming text remains; aggressive Streaming TTS and latency optimization are optional future work, not final requirements. The MiniMax tool-selection / `autumn_nodes` issue is an independent Autumn Core Tool Selection task and does not block Voice closure.
 **PHASE3C:** PASS / CLOSED / FROZEN — Stability-first realtime Voice closure; Quick Voice, fallback, exact Companion session, Fast Mode, Stop, and existing service topology remain preserved.
-**PHASE3D:** IN PROGRESS — Smart Spatial Layout, exact Chat/Talk/Eyes Conversation routing, intent-gated Barge-in, context-aware presentation, approved Windows tool visibility, Remote Eyes, and SW v18 are implemented. Soft Archive is now the approved Conversation lifecycle: UI-only metadata is server-side and OpenClaw Sessions are preserved. Physical device acceptance and final Git closure remain pending.
+**PHASE3D:** PASS / CLOSED / FROZEN — Afterglow One Space / Smart Spatial Layout; Chat, Talk, and Eyes use the real Companion Conversation; Windows Screen Eyes; PC Camera; Xiaomi 15 front/rear cameras; Phone Camera → PC PWA Remote Eyes; Privacy Kill / “闭眼”; intent-gated Barge-in; Context-aware Spatial Presentation; Conversation Manager with Soft Archive / Restore; approved Windows tool visibility; recursive D: file/directory search through Everything; PWA shell v18. Physical-device acceptance passed.
 
 ## Current Product Truth
 
@@ -68,7 +68,7 @@
 - Complexity Gate: DEFERRED.
 - `open_app`: deferred P1/later; natural barge-in, realtime Voice runtime and Voice + Eyes fusion: V0.3; Wake Word and Ambient Mic: not V0.2.
 - V0.3 Phase 3B and its approved post-freeze UI patch are frozen. Phase 3C is PASS / CLOSED / FROZEN.
-- The `autumn_nodes` / MiniMax tool-selection issue is an independent Autumn Core Tool Selection backlog item, not a Phase 3C closure blocker. No Phase 3D or 3E work has started.
+- The `autumn_nodes` / MiniMax tool-selection issue is an independent Autumn Core Tool Selection backlog item, not a Phase 3C closure blocker. Phase 3D is PASS / CLOSED / FROZEN; Phase 3E — Devices & Home Presence is next.
 
 Canonical release record: `AUTUMN_V0_2_FINAL_ACCEPTANCE.md`.
 

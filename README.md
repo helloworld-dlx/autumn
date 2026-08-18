@@ -19,7 +19,9 @@ Autumn 当前拥有冻结的 One Autumn 路由、Hermes 隔离通路、Pi Bridge
 
 ## 核心架构
 
-`Feishu/user → OpenClaw/Autumn on Raspberry Pi 5 → Pi Bridge → Tailscale → Windows execution node`
+`Autumn Companion / PWA (primary interaction surface) → OpenClaw/Autumn on Raspberry Pi 5 → Pi Bridge → Tailscale → Windows execution node`
+
+Feishu remains the notification / fallback / remote-backup surface.
 
 Xiaomi 15 是 Companion / mobile node。Autumn 的用户体验保持 One Autumn；具体 authority 和工具边界见 [AGENTS.md](docs/current/AGENTS.md) 与 [TOOLS.md](docs/current/TOOLS.md)。
 

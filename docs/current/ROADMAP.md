@@ -37,6 +37,8 @@ Streaming text is retained. Aggressive Streaming TTS and further latency optimiz
 
 ### V0.3 Phase 3D — Spatial Eyes and Conversation Reliability
 
-**Status:** IN PROGRESS — Soft Archive implemented. Main cannot be archived; ordinary Conversations can be confirmed-archived, hidden from the default list, viewed in `已归档`, and restored. The small server-side `conversation_ui_state.json` contains only archive metadata and is written atomically; it never copies transcripts or calls `sessions.delete`/`sessions.patch`. Archive entries older than 14 days are future maintenance candidates only. Final device acceptance (Chat/Talk/Eyes, Barge-in, Remote Eyes, and PWA cold starts) is still required before `PASS / CLOSED / FROZEN`.
+**Status:** PASS / CLOSED / FROZEN — Afterglow One Space / Smart Spatial Layout, real Companion Conversation routing for Chat/Talk/Eyes, Windows Screen Eyes, PC Camera, Xiaomi 15 front/rear cameras, Phone Camera → PC PWA Remote Eyes, Privacy Kill / “闭眼”, intent-gated Barge-in, Context-aware Spatial Presentation, Conversation Manager with Soft Archive / Restore, approved Windows tool visibility, recursive D: Everything search, and PWA shell v18 passed physical-device acceptance. Archive metadata remains UI-only in `conversation_ui_state.json`; OpenClaw Sessions are preserved.
 
-Any OpenCode Worker, Complexity Gate, Phase 3D, or Phase 3E work requires a new, explicit scope and acceptance plan. The V0.2 and frozen Phase 3B contracts remain unchanged unless separately authorized.
+**Next:** Phase 3E — Devices & Home Presence.
+
+Any OpenCode Worker, Complexity Gate, or Phase 3E work requires a new, explicit scope and acceptance plan. The V0.2 and frozen Phase 3B contracts remain unchanged unless separately authorized.
