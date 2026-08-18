@@ -20,5 +20,20 @@
       "type": "image/png",
       "purpose": "any"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "直接和 Autumn 说话",
+      "short_name": "Talk",
+      "description": "打开 Talk 并直接进入 Conversation 语音",
+      "url": "/?entry=voice&mode=continuous&autostart=1",
+      "icons": [
+        {
+          "src": "/icons/autumn-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
   ]
 }

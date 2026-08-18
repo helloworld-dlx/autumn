@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { buildVisionMessage, captureFileName, createExplicitCaptureFlow, renderVisionResult, scaledDimensions, sourceLabel } from "./eyes.mjs";
+import { buildVisionMessage, captureFileName, createExplicitCaptureFlow, isExpectedPreviewCancellation, renderVisionResult, scaledDimensions, sourceLabel } from "../eyes.mjs";
 
 assert.deepEqual(scaledDimensions(1920, 1080), { width: 1600, height: 900 });
 assert.deepEqual(scaledDimensions(800, 600), { width: 800, height: 600 });
@@ -51,6 +51,24 @@ await cameraFlow.captureAndSend(async () => new Blob(["camera"]), async () => { 
 assert.equal(sendCount, 2, "camera sends once after explicit capture");
 assert.equal(camera.track.stopped, true, "camera tracks stop after capture");
 
+globalThis.autumnActiveConversationId = "c_A";
+const persistentFlow = createExplicitCaptureFlow((stream) => stream.getTracks().forEach((track) => track.stop()));
+const persistent = fakeStream();
+persistentFlow.preview(persistent, "screen");
+globalThis.autumnActiveConversationId = "c_B";
+const sentConversations = [];
+await persistentFlow.captureAndSend(async () => new Blob(["one"]), async (_blob, _source, conversationId) => { sentConversations.push(conversationId); }, { keepAlive: true });
+await persistentFlow.captureAndSend(async () => new Blob(["two"]), async (_blob, _source, conversationId) => { sentConversations.push(conversationId); }, { keepAlive: true });
+assert.deepEqual(sentConversations, ["c_A", "c_A"], "Vision Session keeps its Conversation snapshot");
+assert.equal(persistentFlow.active?.stream, persistent, "persistent Vision Session keeps stream after captures");
+assert.equal(persistent.track.stopped, false, "persistent Vision Session does not stop after capture");
+persistentFlow.close();
+assert.equal(persistent.track.stopped, true, "closing Vision Session stops stream");
+
+assert.equal(isExpectedPreviewCancellation(new DOMException("interrupted", "AbortError"), { generation: 1, currentGeneration: 2, stream: {}, activeStream: null }), true);
+assert.equal(isExpectedPreviewCancellation(new Error("real preview failure"), { generation: 1, currentGeneration: 1, stream: {}, activeStream: {} }), true, "stale stream is expected cancellation");
+assert.equal(isExpectedPreviewCancellation(new Error("real preview failure"), { generation: 1, currentGeneration: 1, stream: null, activeStream: null }), false);
+
 const result = { children: [], replaceChildren(...nodes) { this.children = nodes; }, append(node) { this.children.push(node); } };
 const markdown = "# 标题\n\n**加粗**\n\n- A\n- B\n\n`code`";
 const safeNode = { tagName: "DIV", safe: true };
@@ -60,12 +78,17 @@ assert.equal(rendered, markdown, "Eyes passes model text to the shared Markdown 
 assert.deepEqual(result.children, [safeNode], "Eyes inserts the renderer's safe DOM node, not raw Markdown text");
 assert.doesNotMatch(renderVisionResult.toString(), /innerHTML/, "Eyes result rendering never injects model HTML");
 
-const source = await readFile(new URL("./eyes.mjs", import.meta.url), "utf8");
+const source = await readFile(new URL("../eyes.mjs", import.meta.url), "utf8");
 const screenHandler = source.slice(source.indexOf("async function captureScreen"), source.indexOf("async function submitCapture"));
 assert.doesNotMatch(screenHandler, /submitCapture\(/, "screen chooser/preview code cannot upload");
 assert.match(screenHandler, /beginPreview\(stream, "screen", "Screen Preview"\)/);
-assert.match(source, /document\.addEventListener\("visibilitychange"[\s\S]*?stopEyes\(\)/);
+assert.match(source, /document\.addEventListener\("visibilitychange", \(\) => \{\s*if \(document\.hidden && activeStream && activeSource !== "screen"\)/);
 assert.match(source, /window\.addEventListener\("pagehide", \(\) => stopEyes\(\)\)/);
 assert.match(source, /track\?\.addEventListener\?\.\("ended"[\s\S]*?stopEyes\(/);
 assert.match(source, /renderVisionResult\(result, text, globalThis\.autumnMarkdown\)/);
+assert.match(source, /CaptureController/);
+assert.match(source, /setFocusBehavior\?\.\("no-focus-change"\)/);
+assert.match(source, /captureAndSend\([\s\S]*?keepAlive/);
+assert.match(source, /globalThis\.autumnEyesCaptureCurrentFrame/);
+assert.match(source, /eyes-screen-once/);
 console.log("Autumn Eyes helpers: PASS");

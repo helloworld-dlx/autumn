@@ -47,13 +47,13 @@ function stopTracks(stream) {
 // never sent merely by becoming eligible: only captureAndSend can call send.
 export function createExplicitCaptureFlow(stop = stopTracks) {
   let active = null;
-  let sent = false;
+  let capturing = false;
 
   return {
     preview(stream, source) {
       this.close();
-      active = { stream, source };
-      sent = false;
+      active = { stream, source, conversationId: String(globalThis.autumnActiveConversationId || "main") };
+      capturing = false;
       return active;
     },
     get active() {
@@ -63,26 +63,38 @@ export function createExplicitCaptureFlow(stop = stopTracks) {
       if (!active) return false;
       const current = active;
       active = null;
+      capturing = false;
       stop(current.stream);
       return true;
     },
-    async captureAndSend(capture, send) {
-      if (!active || sent) return false;
+    async captureAndSend(capture, send, { keepAlive = false } = {}) {
+      if (!active || capturing) return false;
       const current = active;
-      sent = true;
+      capturing = true;
       try {
         const blob = await capture(current);
-        if (active === current) active = null;
-        stop(current.stream);
-        await send(blob, current.source);
+        await send(blob, current.source, current.conversationId);
+        if (!keepAlive && active === current) {
+          active = null;
+          stop(current.stream);
+        }
         return true;
       } catch (error) {
-        if (active === current) active = null;
-        stop(current.stream);
+        if (!keepAlive && active === current) {
+          active = null;
+          stop(current.stream);
+        }
         throw error;
+      } finally {
+        capturing = false;
       }
     },
   };
+}
+
+export function isExpectedPreviewCancellation(error, { generation, currentGeneration, stream, activeStream } = {}) {
+  const streamEnded = stream?.getVideoTracks?.().some((track) => track.readyState === "ended") || stream?.active === false;
+  return generation !== currentGeneration || stream !== activeStream || streamEnded || (error?.name === "AbortError" && generation !== currentGeneration);
 }
 
 // The Chat page owns the Markdown policy. Eyes only asks it for a safe DOM
@@ -118,6 +130,18 @@ function waitForVideo(video, timeoutMs = 5000) {
     };
     video.addEventListener("loadedmetadata", ready);
     video.addEventListener("canplay", ready);
+  });
+}
+
+function waitForPreview(video, stream, generation, isCurrent) {
+  return video.play().catch((error) => {
+    if (!isCurrent()) return false;
+    throw error;
+  }).then(async (started) => {
+    if (started === false) return false;
+    if (!isCurrent()) return false;
+    await waitForVideo(video);
+    return true;
   });
 }
 
@@ -205,6 +229,7 @@ function installPage() {
         <section class="eyes-controls surface">
           <div class="kicker">ON-DEMAND</div><div class="eyes-source-grid">
             <button id="eyes-screen" class="primary" type="button">看当前屏幕</button>
+            <button id="eyes-screen-once" type="button">选择并看一帧</button>
             <button id="eyes-webcam" type="button">电脑摄像头</button>
             <button id="eyes-rear" type="button">手机后摄</button>
             <button id="eyes-front" type="button">手机前摄</button>
@@ -212,7 +237,7 @@ function installPage() {
           </div>
           <textarea id="eyes-question" class="eyes-question" maxlength="1200" placeholder="你希望 Autumn 看什么？例如：帮我看一下这个开发板的 LED 状态。"></textarea>
           <div class="eyes-actions"><button id="eyes-close" class="eyes-close" type="button">闭眼</button><button id="eyes-chat" type="button">去当前对话</button></div>
-          <p class="eyes-note">摄像头预览不会自动上传；点击“拍下并发送”后只发送这一帧。屏幕共享每次都由系统选择器确认，并在截取一帧后立即停止。已发送快照会像普通图片附件一样进入当前 Conversation；“闭眼”不会删除已经发送的消息。</p>
+          <p class="eyes-note">摄像头和屏幕预览都不会自动上传；“拍下并发送”可在 Vision Session 中连续发送当前帧。“选择并看一帧”只发送一帧后关闭屏幕流。已发送快照会像普通图片附件一样进入当前 Conversation；“闭眼”不会删除已经发送的消息。</p>
           <div id="eyes-result" class="eyes-result" aria-live="polite"></div>
         </section>
       </div>
@@ -235,6 +260,7 @@ const webcamButton = document.querySelector("#eyes-webcam");
 const rearButton = document.querySelector("#eyes-rear");
 const frontButton = document.querySelector("#eyes-front");
 const snapButton = document.querySelector("#eyes-snap");
+const screenOnceButton = document.querySelector("#eyes-screen-once");
 const closeButton = document.querySelector("#eyes-close");
 const chatButton = document.querySelector("#eyes-chat");
 
@@ -242,6 +268,7 @@ let activeStream = null;
 let activeSource = null;
 let busy = false;
 let previewUrl = "";
+let previewGeneration = 0;
 const captureFlow = createExplicitCaptureFlow();
 
 function setState(state, label = "") {
@@ -261,6 +288,7 @@ function clearPreviewObjectUrl() {
 }
 
 function stopEyes({ keepImage = true } = {}) {
+  previewGeneration += 1;
   captureFlow.close();
   activeStream = null;
   activeSource = null;
@@ -290,7 +318,7 @@ function beginPreview(stream, source, label = sourceLabel(source)) {
   }, { once: true });
   video.srcObject = stream;
   video.hidden = false;
-  snapButton.disabled = false;
+  snapButton.disabled = true;
   globalThis.autumnEyesActive = true;
   setState("READY", label);
 }
@@ -318,52 +346,67 @@ async function startCamera(facingMode = null) {
     return;
   }
   stopEyes();
+  const generation = previewGeneration;
   clearPreviewObjectUrl();
   image.hidden = true;
   placeholder.hidden = true;
   const source = facingMode === "user" ? "camera-front" : facingMode === "environment" ? "camera-rear" : "camera-default";
+  let stream = null;
   try {
     const videoConstraints = { width: { ideal: 1920 }, height: { ideal: 1080 } };
     if (facingMode) videoConstraints.facingMode = { ideal: facingMode };
-    const stream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       video: videoConstraints,
       audio: false,
     });
+    if (generation !== previewGeneration) return stopTracks(stream);
     beginPreview(stream, source);
-    await video.play();
-    await waitForVideo(video);
+    if (!await waitForPreview(video, stream, generation, () => generation === previewGeneration && stream === activeStream)) return;
+    snapButton.disabled = false;
     setResult("画面只在本机预览。准备好后点“拍下并发送”。");
   } catch (error) {
+    if (isExpectedPreviewCancellation(error, { generation, currentGeneration: previewGeneration, stream, activeStream })) return;
     stopEyes({ keepImage: false });
     setResult(error?.name === "NotAllowedError" ? "没有获得摄像头权限。" : `摄像头没有打开：${error?.message || "未知错误"}`);
   }
 }
 
-async function captureScreen() {
+async function captureScreen({ oneShot = false } = {}) {
   if (busy) return;
   if (!navigator.mediaDevices?.getDisplayMedia) {
     setResult("这个设备/浏览器不支持屏幕捕获。电脑端 Edge/Chrome PWA 通常可用。");
     return;
   }
   stopEyes();
+  const generation = previewGeneration;
   clearPreviewObjectUrl();
   image.hidden = true;
   placeholder.hidden = true;
   let stream = null;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    let controller;
+    if ("CaptureController" in globalThis && "setFocusBehavior" in globalThis.CaptureController.prototype) {
+      controller = new globalThis.CaptureController();
+    }
+    const options = { video: true, audio: false };
+    if (controller) options.controller = controller;
+    stream = await navigator.mediaDevices.getDisplayMedia(options);
+    if (generation !== previewGeneration) return stopTracks(stream);
+    try { controller?.setFocusBehavior?.("no-focus-change"); } catch {}
     beginPreview(stream, "screen", "Screen Preview");
-    await video.play();
-    await waitForVideo(video);
+    if (!await waitForPreview(video, stream, generation, () => generation === previewGeneration && stream === activeStream)) return;
+    snapButton.disabled = false;
     setResult("屏幕仅在本机预览。点击“拍下并发送”后才会上传这一帧。");
+    if (oneShot) await captureCurrentFrame({ keepAlive: false });
   } catch (error) {
+    if (isExpectedPreviewCancellation(error, { generation, currentGeneration: previewGeneration, stream, activeStream })) return;
     stopTracks(stream);
     stopEyes({ keepImage: false });
     setResult(error?.name === "NotAllowedError" ? "已取消屏幕选择。" : `屏幕快照失败：${error?.message || "未知错误"}`);
   }
 }
 
-async function submitCapture(blob, source) {
+async function submitCapture(blob, source, conversationId) {
   if (busy) return;
   busy = true;
   snapButton.disabled = true;
@@ -371,7 +414,6 @@ async function submitCapture(blob, source) {
   setResult("Autumn 正在查看这一帧…");
   try {
     const content = await blobToBase64(blob);
-    const conversationId = String(globalThis.autumnActiveConversationId || "main");
     const newConversation = Boolean(globalThis.autumnConversationIsEphemeral?.(conversationId));
     const attachment = {
       type: "image",
@@ -396,10 +438,10 @@ async function submitCapture(blob, source) {
     if (payload.conversationKey !== `companion:${conversationId}`) throw new Error("Conversation routing mismatch");
     globalThis.autumnConversationMaterialized?.(conversationId);
     setResult(payload.reply);
-    setState("OFF", `${sourceLabel(source)} · 已看完`);
+    setState("READY", `${sourceLabel(source)} · Vision Session`);
     globalThis.autumnRefreshCompanionStatus?.();
   } catch (error) {
-    setState("OFF");
+    setState("READY", `${sourceLabel(source)} · Vision Session`);
     setResult(`没有看成功：${error?.message || "未知错误"}`);
   } finally {
     busy = false;
@@ -407,25 +449,32 @@ async function submitCapture(blob, source) {
   }
 }
 
+async function captureCurrentFrame({ keepAlive = true } = {}) {
+  if (!captureFlow.active || !activeStream || busy) return false;
+  try {
+    return await captureFlow.captureAndSend(
+      () => frameToBlob(video),
+      async (blob, source, conversationId) => {
+        await submitCapture(blob, source, conversationId);
+        if (!keepAlive) stopEyes({ keepImage: true });
+      },
+      { keepAlive },
+    );
+  } catch (error) {
+    if (keepAlive && activeStream) setResult(`快照失败：${error?.message || "未知错误"}`);
+    else stopEyes({ keepImage: false });
+    return false;
+  }
+}
+
+globalThis.autumnEyesCaptureCurrentFrame = () => captureCurrentFrame({ keepAlive: true });
+
 webcamButton.addEventListener("click", () => startCamera());
 rearButton.addEventListener("click", () => startCamera("environment"));
 frontButton.addEventListener("click", () => startCamera("user"));
-screenButton.addEventListener("click", captureScreen);
-snapButton.addEventListener("click", async () => {
-  if (!captureFlow.active || busy) return;
-  try {
-    await captureFlow.captureAndSend(
-      () => frameToBlob(video),
-      async (blob, source) => {
-        stopEyes({ keepImage: false });
-        await submitCapture(blob, source);
-      },
-    );
-  } catch (error) {
-    stopEyes({ keepImage: false });
-    setResult(`快照失败：${error?.message || "未知错误"}`);
-  }
-});
+screenButton.addEventListener("click", () => captureScreen());
+screenOnceButton?.addEventListener("click", () => captureScreen({ oneShot: true }));
+snapButton.addEventListener("click", () => captureCurrentFrame({ keepAlive: true }));
 closeButton.addEventListener("click", () => {
   stopEyes();
   setResult("Vision OFF。当前采集已停止。");
@@ -436,7 +485,7 @@ chatButton.addEventListener("click", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && activeStream) {
+  if (document.hidden && activeStream && activeSource !== "screen") {
     stopEyes();
     setResult("PWA 进入后台，已自动闭眼。");
   }
@@ -447,6 +496,7 @@ window.addEventListener("beforeunload", () => stopEyes());
 const mobile = isMobileLike();
 if (mobile) {
   screenButton.hidden = true;
+  screenOnceButton && (screenOnceButton.hidden = true);
   webcamButton.hidden = true;
 } else {
   rearButton.hidden = true;
