@@ -7,7 +7,7 @@ PI5_CORE = {
     "node_id": "pi5-core",
     "node_type": "core",
     "node_version": "v0.2-frozen",
-    "capabilities": ["agent.main", "gateway", "bridge.forward"],
+    "capabilities": ["agent.main", "gateway", "bridge.forward", "home.read", "home.control"],
     "metadata": {},
 }
 WINDOWS_MAIN = {
@@ -22,8 +22,8 @@ XIAOMI15 = {
     "protocol_version": PROTOCOL_VERSION,
     "node_id": "xiaomi15",
     "node_type": "phone",
-    "node_version": "voice-pwa-v0.2",
-    "capabilities": ["voice.listen", "voice.speak", "open_url", "clipboard.set"],
+    "node_version": "companion-pwa-v19",
+    "capabilities": ["voice.listen", "voice.speak", "camera.capture", "open_url", "clipboard.set"],
     "metadata": {},
 }
 PI_HEALTH_TTL = timedelta(seconds=90)  # retained for protocol compatibility; core presence is self-evident when served

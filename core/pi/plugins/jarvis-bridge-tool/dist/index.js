@@ -39,6 +39,7 @@ export const BRIDGE_HOST_ONLY_URL = "http://127.0.0.1:27901";
 export const BRIDGE_NODES_URL = "http://127.0.0.1:27901/v1/nodes";
 export const BRIDGE_FILE_RETURN_URL = "http://127.0.0.1:27901/v1/files/pull";
 export const BRIDGE_COMPANION_ARTIFACT_URL = "http://127.0.0.1:27901/v1/files/publish-text";
+export const BRIDGE_HOME_URL = "http://127.0.0.1:27901/v1/home";
 
 // Status codes that must NOT be retried / surfaced as opaque errors.
 // The runtime surfaces the original Bridge error body so the LLM can see
@@ -209,6 +210,86 @@ export async function callBridgeCompanionArtifact(filename, content, deps = {}) 
     };
   }
   return { ok: true, status: response.status, payload };
+}
+
+export const AutumnHomeParams = Type.Union([
+  Type.Object({ action: Type.Literal("list") }, { additionalProperties: false }),
+  Type.Object({
+    action: Type.Literal("state"),
+    device: Type.String({ minLength: 1, maxLength: 48, pattern: "^[a-z][a-z0-9_-]*$" }),
+  }, { additionalProperties: false }),
+  Type.Object({
+    action: Type.Literal("control"),
+    device: Type.String({ minLength: 1, maxLength: 48, pattern: "^[a-z][a-z0-9_-]*$" }),
+    command: Type.String({ minLength: 1, maxLength: 48, pattern: "^[a-z_][a-z0-9_]*$" }),
+  }, { additionalProperties: false }),
+]);
+
+export async function callBridgeHome(params, deps = {}) {
+  const fetchImpl = deps.fetch ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") return { ok:false,status:0,bridgeError:"bridge_unreachable" };
+  const valid = params && typeof params === "object" && (
+    (params.action === "list" && Object.keys(params).length === 1) ||
+    (params.action === "state" && typeof params.device === "string" && Object.keys(params).length === 2) ||
+    (params.action === "control" && typeof params.device === "string" && typeof params.command === "string" && Object.keys(params).length === 3)
+  );
+  if (!valid) return { ok:false,status:400,bridgeError:"HOME_REQUEST_INVALID" };
+  const token = (deps.readToken ?? readBridgeToken)();
+  const headers = { "content-type":"application/json" };
+  if (token) headers["x-jarvis-bridge-token"] = token;
+  let response;
+  try {
+    response = await fetchImpl(deps.homeUrl ?? BRIDGE_HOME_URL, { method:"POST",headers,body:JSON.stringify(params) });
+  } catch (err) {
+    return { ok:false,status:0,bridgeError:"bridge_unreachable",bridgeMessage:String(err?.message ?? err) };
+  }
+  let payload=null;
+  try { payload=await response.json(); } catch {}
+  if (!response.ok) return {
+    ok:false,status:response.status,
+    bridgeError:payload?.error_code || `http_${response.status}`,
+    bridgeMessage:payload?.message || "Autumn Home request failed",
+  };
+  return { ok:true,status:response.status,payload };
+}
+
+function safeHomeState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out={};
+  for (const [key,item] of Object.entries(value)) {
+    if (!/^[a-z_][a-z0-9_]*$/.test(key)) continue;
+    if (["entity_id","domain","service","token"].includes(key)) continue;
+    if (["string","number","boolean"].includes(typeof item) || item === null) out[key]=item;
+  }
+  return out;
+}
+
+function safeHomePayload(payload) {
+  if (!payload || payload.status !== "OK") return null;
+  if (Array.isArray(payload.devices)) return {
+    status:"OK",
+    devices:payload.devices.slice(0,32).map(item=>({
+      device:String(item?.device||"").slice(0,48),
+      label:String(item?.label||"").slice(0,80),
+      readable:item?.readable===true,
+      commands:Array.isArray(item?.commands)?item.commands.filter(x=>typeof x==="string").slice(0,12):[],
+      risk:item?.risk === "low" ? "low" : "unknown",
+      confirm:item?.confirm === true,
+    })),
+  };
+  if (typeof payload.device === "string") return {
+    status:"OK",device:payload.device.slice(0,48),label:String(payload.label||"").slice(0,80),
+    ...(typeof payload.command === "string" ? { command:payload.command.slice(0,48) } : {}),
+    state:safeHomeState(payload.state),
+  };
+  return null;
+}
+
+export async function execAutumnHome(params, _config, deps) {
+  const out=await callBridgeHome(params,deps||{});
+  if (!out.ok) return failResult(out.bridgeError||"home_failed",{bridgeMessage:out.bridgeMessage});
+  const safe=safeHomePayload(out.payload);
+  return safe ? okResult(safe) : failResult("home_response_invalid");
 }
 
 // ---------------------------------------------------------------------------
@@ -1125,6 +1206,7 @@ export async function execWorkerResume(_params, _config, deps) {
 
 const PLUGIN_DESCRIPTION =
   "OpenClaw Autumn tool plugin — existing Bridge-backed tools, Node Registry, and Companion file return/artifact publishing. " +
+  "autumn_home exposes the Pi-local allowlisted Home Presence surface. " +
   "Seven legacy probes + two program tools preserved from Phase 3A-3. " +
   "Four Phase 2B-3B R1 worker tools: submit, status, cancel, result. " +
   "Two Phase 2B-4E2 authorization tools: authorization_request, authorization_approve. " +
@@ -1151,6 +1233,19 @@ export default definePluginEntry({
       parameters: AutumnNodesParams,
       execute: async (toolCallId, _p, signal, onUpdate) =>
         await execAutumnNodes(_p, cfg, cfg),
+    });
+
+    api.registerTool({
+      name: "autumn_home",
+      label: "Autumn Home",
+      description:
+        "Read or control only devices explicitly present in Autumn's Pi-local Home allowlist. " +
+        "Use action=list, action=state with a device alias, or action=control with a device alias + configured command. " +
+        "Never invent Home Assistant entity IDs, domains, services or service data. Unallowlisted devices are invisible. " +
+        "Only the adapter can map aliases to Home Assistant. CAPABILITY != AUTHORIZATION.",
+      parameters: AutumnHomeParams,
+      execute: async (toolCallId, _p, signal, onUpdate) =>
+        await execAutumnHome(_p, cfg, cfg),
     });
 
     api.registerTool({

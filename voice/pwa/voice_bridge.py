@@ -1843,7 +1843,6 @@ class Handler(BaseHTTPRequestHandler):
                     raise BridgeError("INVALID_JSON", "JSON body required", 400)
                 message, requested, attachments, new_conversation = parse_chat(self.rfile.read(length))
                 result = process_chat(message, requested, attachments, new_conversation=new_conversation)
-                touch_phone_presence()  # Non-critical telemetry; failure must not affect chat.
                 self.send_json(200, result)
             except BridgeError as exc:
                 self.send_json(exc.status, {"error": exc.code, "message": exc.message})
@@ -1882,7 +1881,6 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 emit = self.begin_ndjson()
                 process_turn_stream(audio, name, mime, requested, emit, new_conversation=new_conversation)
-                touch_phone_presence()
             except BridgeError as exc:
                 if emit is None:
                     self.send_json(exc.status, {"error": exc.code, "message": exc.message})
@@ -1908,7 +1906,6 @@ class Handler(BaseHTTPRequestHandler):
             if length <= 0 or length > MAX_AUDIO_BYTES + 65536: raise BridgeError("AUDIO_TOO_LARGE", "Audio exceeds 20 MiB", 413)
             audio, name, mime, requested, new_conversation = parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(length))
             result = process_turn(audio, name, mime, requested, new_conversation=new_conversation)
-            touch_phone_presence()  # Non-critical telemetry; failure must not affect the turn.
             self.send_json(200, result)
         except BridgeError as exc:
             self.send_json(exc.status, {"error": exc.code, "message": exc.message})

@@ -16,6 +16,8 @@ import pluginEntry, {
   execAutumnCompanionArtifact,
   execPing,
   execSearchFiles,
+  callBridgeHome,
+  execAutumnHome,
 } from "../dist/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,7 +56,7 @@ function fakeFetch(responses) {
 const PI5 = {
   protocol_version: "1", node_id: "pi5-core", node_type: "core",
   node_version: "v0.2-frozen", online: "ONLINE", last_seen: "2026-08-14T00:00:00Z",
-  capabilities: ["agent.main", "gateway", "bridge.forward"], metadata: {},
+  capabilities: ["agent.main", "gateway", "bridge.forward", "home.read", "home.control"], metadata: {},
 };
 const WINDOWS = {
   protocol_version: "1", node_id: "windows-main", node_type: "windows",
@@ -63,15 +65,15 @@ const WINDOWS = {
 };
 const PHONE = {
   protocol_version: "1", node_id: "xiaomi15", node_type: "phone",
-  node_version: "voice-pwa-v0.2", online: "UNKNOWN", last_seen: "2026-08-14T00:00:00Z",
-  capabilities: ["voice.listen", "voice.speak", "open_url", "clipboard.set"], metadata: {},
+  node_version: "companion-pwa-v19", online: "UNKNOWN", last_seen: "2026-08-14T00:00:00Z",
+  capabilities: ["voice.listen", "voice.speak", "camera.capture", "open_url", "clipboard.set"], metadata: {},
 };
 
 test("manifest and runtime register the exact current tool set", () => {
   const api = loadPlugin();
   const names = api.registeredTools.map((entry) => entry.tool.name).sort();
   assert.deepEqual(names, [
-    "autumn_companion_artifact", "autumn_file_return", "autumn_nodes", "jarvis_list_directory", "jarvis_ping", "jarvis_program_list",
+    "autumn_companion_artifact", "autumn_file_return", "autumn_home", "autumn_nodes", "jarvis_list_directory", "jarvis_ping", "jarvis_program_list",
     "jarvis_program_run", "jarvis_search_files", "jarvis_system_info", "jarvis_system_status",
     "worker_authorization_approve", "worker_authorization_request", "worker_cancel",
     "worker_control_status", "worker_emergency_stop", "worker_result", "worker_resume",
@@ -215,4 +217,27 @@ test("jarvis_search_files surfaces Runner path rejection instead of returning an
   const result = await execSearchFiles({ path: "C:\\\\", query: "Windows", kind: "file" }, {}, { fetch: mock.fetch });
   assert.equal(result.details.status, "failed");
   assert.equal(result.details.bridgeError, "PATH_NOT_ALLOWED");
+});
+
+test("autumn_home uses the fixed Bridge route and sanitizes safe responses", async () => {
+  const mock = fakeFetch([jsonResponse(200, { status: "OK", devices: [{ device: "desk_lamp", label: "Desk Lamp", readable: true, commands: ["on"], risk: "low", confirm: false, entity_id: "light.secret" }] })]);
+  const raw = await callBridgeHome({ action: "list" }, { fetch: mock.fetch, readToken: () => "t".repeat(32) });
+  assert.equal(raw.ok, true);
+  assert.equal(mock.calls[0].url, "http://127.0.0.1:27901/v1/home");
+  assert.equal(mock.calls[0].init.headers["x-jarvis-bridge-token"], "t".repeat(32));
+  const result = await execAutumnHome({ action: "list" }, {}, { fetch: async () => jsonResponse(200, { status: "OK", device: "desk_lamp", label: "Desk Lamp", state: { state: "on", entity_id: "light.secret", service: "turn_on" } }) });
+  assert.equal(result.details.status, "OK");
+  assert.equal(JSON.stringify(result).includes("entity_id"), false);
+  assert.equal(JSON.stringify(result).includes("service"), false);
+});
+
+test("autumn_home validates control shape before fetch and surfaces unknown aliases", async () => {
+  let calls = 0;
+  const fetch = async () => { calls += 1; return jsonResponse(404, { error_code: "HOME_DEVICE_NOT_FOUND" }); };
+  const invalid = await callBridgeHome({ action: "control", device: "desk_lamp", command: "on", service: "unlock" }, { fetch });
+  assert.equal(invalid.bridgeError, "HOME_REQUEST_INVALID");
+  assert.equal(calls, 0);
+  const missing = await execAutumnHome({ action: "state", device: "door_lock" }, {}, { fetch });
+  assert.equal(missing.details.status, "failed");
+  assert.equal(missing.details.reason, "HOME_DEVICE_NOT_FOUND");
 });

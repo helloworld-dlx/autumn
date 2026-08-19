@@ -231,6 +231,15 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertTrue(bridge.touch_phone_presence(lambda *_args, **_kwargs: Response()))
         self.assertFalse(bridge.touch_phone_presence(lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())))
 
+    def test_phone_presence_touch_is_only_explicit_endpoint(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertEqual(source.count("touch_phone_presence()"), 1)
+        self.assertIn('self.path == "/api/presence/touch"', source)
+        chat = source[source.index('if self.path == "/api/chat"'):source.index('if self.path == "/api/turn-stream"')]
+        turn = source[source.index('if self.path != "/api/turn"'):]
+        self.assertNotIn("touch_phone_presence()", chat)
+        self.assertNotIn("touch_phone_presence()", turn)
+
     def test_service_worker_is_a_static_route(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
         self.assertIn('self.path == "/sw.js"', source)

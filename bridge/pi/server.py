@@ -6,11 +6,12 @@ from .config import ACTIONS,validate_config
 from .runner_client import build_signed_request,call_runner,submit_job,job_status,cancel_job,job_result,job_list,authorization_request,authorization_approve,authorization_list,worker_control_status,worker_pause,worker_resume,runner_health
 from .node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15
 from .file_pull import pull_file,publish_text_artifact,DEFAULT_TRANSFER_ROOT
+from .home_adapter import HomeAdapter,HomeError
 PROBE_INTERVAL_SECONDS=60
 class BridgeServer(ThreadingHTTPServer):
  daemon_threads=True;request_queue_size=8
  def __init__(self,c,start_probe=False):
-  self.config=c;self.registry=NodeRegistry();self.registry.upsert({**PI5_CORE,"last_seen":None});self._probe_stop=threading.Event();self._probe_thread=None;super().__init__((c.listen_host,c.listen_port),Handler)
+  self.config=c;self.registry=NodeRegistry();self.registry.upsert({**PI5_CORE,"last_seen":None});self.home=HomeAdapter();self._probe_stop=threading.Event();self._probe_thread=None;super().__init__((c.listen_host,c.listen_port),Handler)
   if start_probe:
    self._probe_thread=threading.Thread(target=self._probe_loop,name="windows-node-probe",daemon=True);self._probe_thread.start()
  def get_request(self):x,a=super().get_request();x.settimeout(15);return x,a
@@ -58,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
    if self.server.registry.get("xiaomi15") is None:self.server.registry.upsert({**XIAOMI15,"last_seen":None})
    else:self.server.registry.touch("xiaomi15")
    self.send(200,{"status":"ok"});return
+  if p=="/v1/home":
+   self._do_home();return
   # Job routes — separate namespace, no ACTIONS check
   if p in ("/v1/jobs/submit","/v1/jobs/status","/v1/jobs/cancel","/v1/jobs/result","/v1/jobs/list"):
    self._do_job(p);return
@@ -73,6 +76,18 @@ class Handler(BaseHTTPRequestHandler):
    self._do_worker_control(p);return
   if p!="/v1/execute":self.error(404,"NOT_FOUND");return
   self._do_execute()
+ def _do_home(self):
+  try:t=load_secret(self.server.config.bridge_token_path)
+  except ValueError:self.error(503,"BRIDGE_KEY_UNAVAILABLE");return
+  if not token_matches(self.headers.get("X-Jarvis-Bridge-Token"),t):self.error(401,"BRIDGE_AUTH_FAILED");return
+  n=self.headers.get("Content-Length")
+  if self.headers.get("Transfer-Encoding") or not n or not n.isdecimal() or not 0<int(n)<=8192:self.error(400,"BRIDGE_REQUEST_INVALID");return
+  try:body=json.loads(self.rfile.read(int(n)).decode())
+  except Exception:self.error(400,"BRIDGE_REQUEST_INVALID");return
+  try:result=self.server.home.handle(body)
+  except HomeError as exc:
+   self.send(exc.status,{"status":"failed","error_code":exc.code,"message":exc.message});return
+  self.send(200,result)
  def _do_execute(self):
   try:t=load_secret(self.server.config.bridge_token_path)
   except ValueError:self.error(503,"BRIDGE_KEY_UNAVAILABLE");return
@@ -178,7 +193,12 @@ class Handler(BaseHTTPRequestHandler):
  def _do_companion_status(self):
   # Serving this endpoint is itself fresh evidence that pi5-core is alive.
   self.server.registry.touch("pi5-core")
-  payload={"nodes":self.server.registry.list(),"windowsDataAvailable":False,"workersPaused":None,"jobs":[],"approvals":[]}
+  try:
+   home_configured=self.server.home.configured()
+   home_devices=self.server.home.list_devices().get("devices",[]) if home_configured else []
+  except HomeError:
+   home_configured=False;home_devices=[]
+  payload={"nodes":self.server.registry.list(),"windowsDataAvailable":False,"workersPaused":None,"jobs":[],"approvals":[],"home":{"configured":home_configured,"devices":home_devices}}
   try:key=load_secret(self.server.config.runner_key_path)
   except ValueError:
    self.send(200,payload);return

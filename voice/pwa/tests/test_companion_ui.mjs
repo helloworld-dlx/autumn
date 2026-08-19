@@ -47,10 +47,13 @@ assert.match(source, /attachment\.transferId\?' downloadable'/, "returned assist
 assert.match(source, /body\.chat-page-open #page-chat \.chat-messages\{[^}]*overflow-y:auto;overscroll-behavior:contain/, "Chat uses an internal message scroller instead of growing the whole page");
 assert.match(source, /document\.body\.classList\.toggle\('chat-page-open',page==='chat'\)/, "page navigation locks document scrolling only while Chat is active");
 assert.match(source, /\.node-list \.status-badge\{width:64px;min-width:64px/, "Home node state badges share one aligned width");
-assert.match(source, /function nextAutoBoundary\(now=new Date\(\)\)/, "Auto theme schedules the next 07:00/17:00/20:00 boundary without polling");
-assert.match(source, /setTimeout\(\(\)=>applyTheme\('auto',\{persist:false\}\),delay\)/, "Auto theme re-resolves at the next boundary");
-assert.match(source, /refreshDynamicTheme\(\);touchPresence\(\);probeAutumn\(\)/, "returning to the PWA refreshes the time-based theme");
-assert.match(source, /'Auto · '\+actual/, "Auto exposes its resolved visual theme for debugging");
+assert.doesNotMatch(source, /id="themeToggle"|id="themePanel"|autumnTheme|resolveTheme|nextAutoBoundary/, "Phase 3E Companion is Afterglow-only with no hidden theme state");
+assert.match(source, /Afterglow · local only/);
+assert.match(source, /function isPortableCompanion\(\)\{return \/Android\|iPhone\|iPad\/i\.test\(navigator\.userAgent\|\|''\)\}/);
+assert.match(source, /if\(!isPortableCompanion\(\)\)return;fetch\('\/api\/presence\/touch'/, "Xiaomi presence touch is mobile-gated");
+assert.doesNotMatch(source, /留给 Phase 3D/);
+assert.match(source, /Xiaomi 15 Camera \/ Remote Eyes 已可用/);
+assert.match(source, /id="home-devices"/);
 assert.match(source, /interactive-widget=resizes-content/, "mobile keyboard can resize the Chat viewport instead of covering the composer");
 
 console.log("Chat composer and Main history regression: PASS");
@@ -76,7 +79,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-  assert.match(worker, /autumn-companion-shell-v18/);
+  assert.match(worker, /autumn-companion-shell-v19/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);

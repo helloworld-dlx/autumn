@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "devices": {
+    "desk_lamp": {
+      "label": "书桌灯（示例）",
+      "entity_id": "light.replace_me",
+      "read": ["state", "brightness"],
+      "risk": "low",
+      "confirm": false,
+      "actions": {
+        "on": {"service": "turn_on"},
+        "off": {"service": "turn_off"}
+      }
+    },
+    "room_temperature": {
+      "label": "室温（示例）",
+      "entity_id": "sensor.replace_me",
+      "read": ["state", "unit_of_measurement"],
+      "risk": "low",
+      "confirm": false,
+      "actions": {}
+    }
+  }
+}

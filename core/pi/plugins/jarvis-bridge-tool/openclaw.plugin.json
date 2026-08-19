@@ -1,8 +1,8 @@
 {
   "id": "jarvis-bridge-tool",
   "name": "Jarvis Bridge Tool",
-  "description": "Bridge-backed Autumn tools plus read-only Node Registry, Companion file return, and bounded generated-text artifacts.",
-  "version": "0.3.5",
+  "description": "Bridge-backed Autumn tools plus read-only Node Registry, Home Presence, Companion file return, and bounded generated-text artifacts.",
+  "version": "0.3.6",
   "activation": {
     "onStartup": true
   },
@@ -14,6 +14,7 @@
   "contracts": {
     "tools": [
       "autumn_nodes",
+      "autumn_home",
       "autumn_companion_artifact",
       "autumn_file_return",
       "jarvis_ping",

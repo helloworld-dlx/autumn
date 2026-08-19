@@ -103,9 +103,16 @@ class BridgeTests(unittest.TestCase):
    x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST",path,body);r=x.getresponse();v=json.loads(r.read());x.close();return r.status,v
   try:
    status,_=call("/v1/internal/nodes/xiaomi15/touch");self.assertEqual(status,200);node=z.registry.get("xiaomi15")
-   self.assertEqual(node["capabilities"],XIAOMI15["capabilities"]);self.assertNotIn("camera.capture",node["capabilities"]);self.assertEqual(node["online"],"RECENT")
+   self.assertEqual(node["capabilities"],XIAOMI15["capabilities"]);self.assertIn("camera.capture",node["capabilities"]);self.assertEqual(node["node_version"],"companion-pwa-v19");self.assertEqual(node["online"],"RECENT")
    status,error=call("/v1/internal/nodes/other/touch");self.assertEqual(status,404);self.assertEqual(error["error_code"],"NOT_FOUND")
    status,error=call("/v1/internal/nodes/xiaomi15/touch",b"{}");self.assertEqual(status,400);self.assertEqual(error["error_code"],"BRIDGE_REQUEST_INVALID")
+  finally:z.shutdown();z.server_close();thread.join()
+ def test_home_route_requires_bridge_token_and_forwards_safe_body(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32);z=BridgeServer(replace(self.c,listen_port=0),start_probe=False);thread=threading.Thread(target=z.serve_forever);thread.start()
+  calls=[];z.home.handle=lambda body:calls.append(body) or {"status":"OK","devices":[{"device":"desk_lamp","label":"Desk Lamp"}]}
+  try:
+   body=json.dumps({"action":"list"}).encode();x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST","/v1/home",body=body,headers={"Content-Type":"application/json"});r=x.getresponse();self.assertEqual(r.status,401);r.read();x.close()
+   x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST","/v1/home",body=body,headers={"Content-Type":"application/json","X-Jarvis-Bridge-Token":"t"*32});r=x.getresponse();payload=json.loads(r.read());x.close();self.assertEqual(r.status,200);self.assertEqual(calls,[{"action":"list"}]);self.assertNotIn("entity_id",json.dumps(payload))
   finally:z.shutdown();z.server_close();thread.join()
  def test_node_registry_valid_pi5_descriptor_get_list_touch_and_presence(self):
   from datetime import datetime,timezone,timedelta
