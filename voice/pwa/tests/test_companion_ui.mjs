@@ -54,6 +54,7 @@ assert.match(source, /if\(!isPortableCompanion\(\)\)return;fetch\('\/api\/presen
 assert.doesNotMatch(source, /留给 Phase 3D/);
 assert.match(source, /Xiaomi 15 Camera \/ Remote Eyes 已可用/);
 assert.match(source, /id="home-devices"/);
+assert.match(source, /home_devices\.mjs/);
 assert.match(source, /interactive-widget=resizes-content/, "mobile keyboard can resize the Chat viewport instead of covering the composer");
 
 console.log("Chat composer and Main history regression: PASS");
@@ -79,7 +80,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-  assert.match(worker, /autumn-companion-shell-v19/);
+  assert.match(worker, /autumn-companion-shell-v20/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -150,7 +151,7 @@ const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const worker = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
 
 test('service worker caches only the static Companion shell', () => {
-  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/spatial_shell.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"', '"/assets/afterglow-home.webp"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/spatial_shell.mjs"', '"/home_devices.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"', '"/assets/afterglow-home.webp"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const privateRoute of ['/api/', '/health', '/audio/', 'IndexedDB', 'sync']) assert.doesNotMatch(worker, new RegExp(privateRoute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
@@ -307,4 +308,14 @@ test("conversation soft archive is explicit, conservative, and Main is protected
   assert.match(html, /globalThis\.autumnPresentUiHints\?\.\(payload\.uiHints\)/, "Chat presents spatial objects from structured uiHints");
   assert.match(html, /event\.type==='ui'/, "streaming Talk presents tool-driven spatial hints");
   assert.match(html, /fetch\(\'\/api\/barge-intent\'/, "Barge-in uses an STT intent gate before aborting playback");
+});
+
+test("Home module is compact, room-aware, and Companion-only managed", async () => {
+  const home = await readFile(new URL("../home_devices.mjs", import.meta.url), "utf8");
+  assert.match(home, /发现新设备/);
+  assert.match(home, /加入 Autumn/);
+  assert.match(home, /可控制/);
+  assert.match(home, /只读/);
+  assert.match(home, /room/);
+  assert.doesNotMatch(home, /set_percentage|volume_set/);
 });

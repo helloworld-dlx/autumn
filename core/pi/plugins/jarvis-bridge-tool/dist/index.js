@@ -222,16 +222,19 @@ export const AutumnHomeParams = Type.Union([
     action: Type.Literal("control"),
     device: Type.String({ minLength: 1, maxLength: 48, pattern: "^[a-z][a-z0-9_-]*$" }),
     command: Type.String({ minLength: 1, maxLength: 48, pattern: "^[a-z_][a-z0-9_]*$" }),
+    value: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
   }, { additionalProperties: false }),
 ]);
 
 export async function callBridgeHome(params, deps = {}) {
   const fetchImpl = deps.fetch ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") return { ok:false,status:0,bridgeError:"bridge_unreachable" };
+  const keys = params && typeof params === "object" ? Object.keys(params) : [];
+  const validValue = params?.value === undefined || (Number.isInteger(params.value) && params.value >= 0 && params.value <= 100);
   const valid = params && typeof params === "object" && (
-    (params.action === "list" && Object.keys(params).length === 1) ||
-    (params.action === "state" && typeof params.device === "string" && Object.keys(params).length === 2) ||
-    (params.action === "control" && typeof params.device === "string" && typeof params.command === "string" && Object.keys(params).length === 3)
+    (params.action === "list" && keys.length === 1) ||
+    (params.action === "state" && typeof params.device === "string" && keys.length === 2) ||
+    (params.action === "control" && typeof params.device === "string" && typeof params.command === "string" && validValue && keys.every(k=>["action","device","command","value"].includes(k)) && (keys.length===3 || keys.length===4))
   );
   if (!valid) return { ok:false,status:400,bridgeError:"HOME_REQUEST_INVALID" };
   const token = (deps.readToken ?? readBridgeToken)();
@@ -1240,7 +1243,8 @@ export default definePluginEntry({
       label: "Autumn Home",
       description:
         "Read or control only devices explicitly present in Autumn's Pi-local Home allowlist. " +
-        "Use action=list, action=state with a device alias, or action=control with a device alias + configured command. " +
+        "Always call action=list when an alias or capability is uncertain, and use only commands returned by list. " +
+        "Use action=list, action=state with a device alias, or action=control with a device alias + configured command. Fan set_speed and speaker set_volume use integer value 0-100. " +
         "Never invent Home Assistant entity IDs, domains, services or service data. Unallowlisted devices are invisible. " +
         "Only the adapter can map aliases to Home Assistant. CAPABILITY != AUTHORIZATION.",
       parameters: AutumnHomeParams,

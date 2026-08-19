@@ -154,5 +154,61 @@ class HomeAdapterTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "HOME_NOT_CONFIGURED")
 
 
+class HomeFinalFeatureTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); root = Path(self.temp.name)
+        self.config = root / "home.json"; self.token = root / "ha.token"; self.token.write_text("t" * 64, encoding="utf-8")
+        self.config.write_text(json.dumps({"version": 1, "devices": {
+            "old_temp": {"label": "客厅温度", "entity_id": "sensor.old_temp", "read": ["state", "unit_of_measurement"], "actions": {}, "risk": "low", "confirm": False},
+            "old_hum": {"label": "客厅湿度", "entity_id": "sensor.old_hum", "read": ["state", "unit_of_measurement"], "actions": {}, "risk": "low", "confirm": False},
+        }}), encoding="utf-8")
+        self.states = [
+            {"entity_id":"sensor.old_temp","state":"26.4","attributes":{"device_class":"temperature","unit_of_measurement":"°C","friendly_name":"客厅温度"}},
+            {"entity_id":"sensor.old_hum","state":"58","attributes":{"device_class":"humidity","unit_of_measurement":"%","friendly_name":"客厅湿度"}},
+            {"entity_id":"fan.bedroom","state":"off","attributes":{"percentage":0,"friendly_name":"卧室风扇"}},
+            {"entity_id":"media_player.speaker","state":"idle","attributes":{"volume_level":0.3,"friendly_name":"客厅音箱"}},
+            {"entity_id":"sensor.new_temp","state":"25.2","attributes":{"device_class":"temperature","unit_of_measurement":"°C","friendly_name":"卧室温度"}},
+            {"entity_id":"sensor.new_hum","state":"60","attributes":{"device_class":"humidity","unit_of_measurement":"%","friendly_name":"卧室湿度"}},
+            {"entity_id":"camera.secret","state":"idle","attributes":{"friendly_name":"Secret Camera"}},
+        ]
+        self.meta={"sensor.old_temp":{"device_id":"dev_old","device_name":"客厅温湿度计","area_name":"客厅"},"sensor.old_hum":{"device_id":"dev_old","device_name":"客厅温湿度计","area_name":"客厅"},"fan.bedroom":{"device_id":"dev_fan","device_name":"卧室风扇","area_name":"卧室"},"media_player.speaker":{"device_id":"dev_speaker","device_name":"客厅音箱","area_name":"客厅"},"sensor.new_temp":{"device_id":"dev_new","device_name":"卧室温湿度计","area_name":"卧室"},"sensor.new_hum":{"device_id":"dev_new","device_name":"卧室温湿度计","area_name":"卧室"}}
+        self.router = self.Router(self.states, self.meta); self.adapter = HomeAdapter(self.config, self.token, opener=self.router)
+    def tearDown(self): self.temp.cleanup()
+    class Router:
+        def __init__(self, states, meta): self.states=states; self.meta=meta; self.calls=[]; self.services=[]
+        def __call__(self, request, timeout=0):
+            self.calls.append((request, timeout)); url=request.full_url
+            if url.endswith('/api/states'): return Response(200, self.states)
+            if '/api/states/' in url: return Response(200, next(x for x in self.states if x['entity_id']==url.rsplit('/api/states/',1)[1]))
+            if url.endswith('/api/template'):
+                text=json.loads(request.data)['template']; eid=text.split("device_id('",1)[1].split("')",1)[0]; m=self.meta.get(eid,{})
+                return Response(200, f"{m.get('device_id','')}\n{m.get('device_name','')}\n{m.get('area_name','')}")
+            if '/api/services/' in url:
+                body=json.loads(request.data); self.services.append((url,body)); item=next(x for x in self.states if x['entity_id']==body['entity_id']); service=url.rsplit('/',1)[1]
+                if service=='set_percentage': item['attributes']['percentage']=body['percentage']; item['state']='on'
+                if service=='volume_set': item['attributes']['volume_level']=body['volume_level']
+                if service=='turn_on': item['state']='on'
+                if service=='turn_off': item['state']='off'
+                if service=='media_play': item['state']='playing'
+                if service=='media_pause': item['state']='paused'
+                return Response(200,[item])
+            raise AssertionError(url)
+    def test_companion_merge_and_discovery_are_sanitized(self):
+        out=self.adapter.companion_devices(); self.assertEqual(len(out['devices']),1); self.assertEqual(out['devices'][0]['kind'],'climate_sensor'); self.assertNotIn('entity_id',json.dumps(out))
+        disc=self.adapter.discover_candidates(); kinds=sorted(x['kind'] for x in disc['candidates']); self.assertEqual(kinds,['climate_sensor','fan','speaker']); self.assertNotIn('entity_id',json.dumps(disc)); self.assertNotIn('camera',json.dumps(disc).lower())
+    def test_authorize_fan_and_speed(self):
+        fan=next(x for x in self.adapter.discover_candidates()['candidates'] if x['kind']=='fan'); self.adapter.authorize_candidate(fan['candidate_id']); f=next(x for x in self.adapter.list_devices()['devices'] if 'set_speed' in x['commands']); out=self.adapter.handle({'action':'control','device':f['device'],'command':'set_speed','value':35}); self.assertEqual(out['state']['percentage'],35); self.assertTrue(self.router.services[-1][0].endswith('/fan/set_percentage'))
+    def test_authorize_speaker_volume_and_fixed_commands(self):
+        speaker=next(x for x in self.adapter.discover_candidates()['candidates'] if x['kind']=='speaker'); self.adapter.authorize_candidate(speaker['candidate_id']); s=next(x for x in self.adapter.list_devices()['devices'] if 'set_volume' in x['commands']); out=self.adapter.handle({'action':'control','device':s['device'],'command':'set_volume','value':30}); self.assertEqual(out['state']['volume_level'],0.3); self.assertTrue(self.router.services[-1][0].endswith('/media_player/volume_set'))
+    def test_values_and_model_discovery_are_rejected(self):
+        fan=next(x for x in self.adapter.discover_candidates()['candidates'] if x['kind']=='fan'); self.adapter.authorize_candidate(fan['candidate_id']); alias=next(x for x in self.adapter.list_devices()['devices'] if 'set_speed' in x['commands'])['device']
+        for value in (-1,101,1.5,True):
+            with self.assertRaises(HomeError): self.adapter.handle({'action':'control','device':alias,'command':'set_speed','value':value})
+        for body in ({'action':'discover'},{'action':'authorize','candidate_id':'a'*24}):
+            with self.assertRaises(HomeError): self.adapter.handle(body)
+    def test_unknown_candidate(self):
+        with self.assertRaises(HomeError) as caught: self.adapter.authorize_candidate('a'*24)
+        self.assertEqual(caught.exception.code,'HOME_CANDIDATE_NOT_FOUND')
+
 if __name__ == "__main__":
     unittest.main()

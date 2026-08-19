@@ -45,6 +45,13 @@ AUDIO_STREAMS: dict[str, "AudioStream"] = {}
 AUDIO_STREAMS_LOCK = threading.Lock()
 PHONE_TOUCH_URL = "http://127.0.0.1:27901/v1/internal/nodes/xiaomi15/touch"
 COMPANION_STATUS_URL = "http://127.0.0.1:27901/v1/internal/companion/status"
+BRIDGE_HOME_DISCOVER_URL = "http://127.0.0.1:27901/v1/internal/home/discover"
+BRIDGE_HOME_AUTHORIZE_URL = "http://127.0.0.1:27901/v1/internal/home/authorize"
+BRIDGE_TOKEN_PATH = Path(os.environ.get(
+    "AUTUMN_BRIDGE_TOKEN_PATH",
+    "/home/xyzlh/.config/jarvis-bridge/bridge_local.token",
+))
+HOME_CANDIDATE_RE = re.compile(r"^[a-f0-9]{24}$")
 TRANSFER_ROOT = Path(os.environ.get("AUTUMN_TRANSFER_ROOT", "/home/xyzlh/jarvis-bridge/transfers"))
 TRANSFER_ID = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 ATTACHMENT_META_PATH = Path(os.environ.get(
@@ -1540,6 +1547,43 @@ def companion_status(opener=None) -> dict[str, object]:
         raise BridgeError("STATUS_UNAVAILABLE", "Companion status is unavailable", 502) from exc
 
 
+def _read_companion_bridge_token(path: Path = BRIDGE_TOKEN_PATH) -> str:
+    if not path.is_file() or path.is_symlink():
+        raise BridgeError("HOME_MANAGEMENT_UNAVAILABLE", "Home management is unavailable", 503)
+    try:
+        if not 20 <= path.stat().st_size <= 4096:
+            raise OSError("invalid token size")
+        token = path.read_text("utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise BridgeError("HOME_MANAGEMENT_UNAVAILABLE", "Home management is unavailable", 503) from exc
+    if len(token) < 20 or any(ch.isspace() for ch in token):
+        raise BridgeError("HOME_MANAGEMENT_UNAVAILABLE", "Home management is unavailable", 503)
+    return token
+
+
+def companion_home_management(url: str, payload: dict[str, object] | None = None, opener=None) -> dict[str, object]:
+    token = _read_companion_bridge_token()
+    data = b"" if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    request = Request(url, data=data, method="POST", headers={
+        "X-Jarvis-Bridge-Token": token,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    })
+    try:
+        open_request = opener or build_opener(ProxyHandler({})).open
+        with open_request(request, timeout=5) as response:
+            body = json.loads(response.read())
+    except HTTPError as exc:
+        try: body = json.loads(exc.read())
+        except Exception: body = {}
+        raise BridgeError(str(body.get("error_code") or "HOME_MANAGEMENT_FAILED"), str(body.get("message") or "Home management failed")[:160], exc.code) from exc
+    except (OSError, URLError, TimeoutError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BridgeError("HOME_MANAGEMENT_UNAVAILABLE", "Home management is unavailable", 502) from exc
+    if not isinstance(body, dict):
+        raise BridgeError("HOME_MANAGEMENT_FAILED", "Home management returned invalid data", 502)
+    return body
+
+
 def list_returned_files(root: Path = TRANSFER_ROOT, limit: int = 50, include_hidden: bool = False,
                         hidden_path: Path = HIDDEN_FILES_PATH) -> list[dict[str, object]]:
     if not root.is_dir():
@@ -1728,6 +1772,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/spatial_shell.mjs":
             data = (ROOT / "spatial_shell.mjs").read_bytes()
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
+        if self.path == "/home_devices.mjs":
+            data = (ROOT / "home_devices.mjs").read_bytes()
+            self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
         if self.path == "/sw.js":
             data = (ROOT / "sw.js").read_bytes()
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
@@ -1770,6 +1817,28 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
         request_path = parsed.path
+        if request_path == "/api/home/discover":
+            if self.headers.get("X-Autumn-Companion") != "1":
+                self.send_json(403, {"error":"HOME_MANAGEMENT_FORBIDDEN","message":"Home management forbidden"}); return
+            if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length") not in (None,"0"):
+                self.send_json(400, {"error":"INVALID_JSON","message":"Unexpected request body"}); return
+            try: self.send_json(200, companion_home_management(BRIDGE_HOME_DISCOVER_URL))
+            except BridgeError as exc: self.send_json(exc.status,{"error":exc.code,"message":exc.message})
+            return
+        if request_path == "/api/home/authorize":
+            if self.headers.get("X-Autumn-Companion") != "1":
+                self.send_json(403, {"error":"HOME_MANAGEMENT_FORBIDDEN","message":"Home management forbidden"}); return
+            try:
+                length=int(self.headers.get("Content-Length","0"))
+                if length<=0 or length>1024 or "application/json" not in self.headers.get("Content-Type","").lower():
+                    raise BridgeError("INVALID_JSON","JSON body required",400)
+                body=json.loads(self.rfile.read(length))
+                if not isinstance(body,dict) or set(body)!={"candidateId"} or not isinstance(body.get("candidateId"),str) or not HOME_CANDIDATE_RE.fullmatch(body["candidateId"]):
+                    raise BridgeError("INVALID_JSON","Invalid candidate",400)
+                self.send_json(200, companion_home_management(BRIDGE_HOME_AUTHORIZE_URL,{"candidate_id":body["candidateId"]}))
+            except BridgeError as exc: self.send_json(exc.status,{"error":exc.code,"message":exc.message})
+            except json.JSONDecodeError: self.send_json(400,{"error":"INVALID_JSON","message":"Invalid JSON"})
+            return
         if request_path == "/api/vision/casts":
             try:
                 length = int(self.headers.get("Content-Length", "0"))

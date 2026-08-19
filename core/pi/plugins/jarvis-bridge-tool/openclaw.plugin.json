@@ -2,7 +2,7 @@
   "id": "jarvis-bridge-tool",
   "name": "Jarvis Bridge Tool",
   "description": "Bridge-backed Autumn tools plus read-only Node Registry, Home Presence, Companion file return, and bounded generated-text artifacts.",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "activation": {
     "onStartup": true
   },

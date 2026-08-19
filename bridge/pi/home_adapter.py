@@ -1,13 +1,18 @@
-"""Minimal allowlisted Home Assistant adapter for Autumn Phase 3E.
+"""Allowlisted Home Assistant adapter for Autumn Phase 3E.
 
-The model never receives Home Assistant entity IDs and never supplies Home
-Assistant domains/services.  Those values stay in a device-local allowlist.
+Model-visible Home stays intentionally small: list / state / control only.
+Companion-only discovery and authorization are separate methods and never expose
+Home Assistant entity IDs, domains, service names, or the HA token to the model.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
+import tempfile
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, ProxyHandler
@@ -25,12 +30,21 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_DEVICES = 32
 MAX_ATTRIBUTES = 16
 MAX_ACTIONS = 12
+MAX_DISCOVERY_CANDIDATES = 64
+META_CACHE_SECONDS = 300
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,47}$")
 ENTITY_ID_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
 NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
-CONTROL_DOMAINS = frozenset(("light", "switch"))
-CONTROL_SERVICES = frozenset(("turn_on", "turn_off", "toggle"))
+CANDIDATE_RE = re.compile(r"^[a-f0-9]{24}$")
+
 DENIED_DOMAINS = frozenset(("lock", "alarm_control_panel", "camera"))
+DISCOVERY_DOMAINS = frozenset(("light", "switch", "fan", "media_player", "sensor"))
+COMMAND_SERVICE = {
+    "light": {"on": "turn_on", "off": "turn_off"},
+    "switch": {"on": "turn_on", "off": "turn_off"},
+    "fan": {"on": "turn_on", "off": "turn_off", "set_speed": "set_percentage"},
+    "media_player": {"play": "media_play", "pause": "media_pause", "set_volume": "volume_set"},
+}
 
 
 class HomeError(Exception):
@@ -47,10 +61,12 @@ class _NoRedirect(HTTPRedirectHandler):
 class HomeAdapter:
     """Read/control only devices explicitly present in the local allowlist."""
 
-    def __init__(self, config_path: Path = HOME_CONFIG_PATH, token_path: Path = HOME_TOKEN_PATH, opener=None):
+    def __init__(self, config_path: Path = HOME_CONFIG_PATH, token_path: Path = HOME_TOKEN_PATH, opener=None, clock=time.monotonic):
         self.config_path = Path(config_path)
         self.token_path = Path(token_path)
         self._open = opener or build_opener(ProxyHandler({}), _NoRedirect()).open
+        self._clock = clock
+        self._meta_cache: dict[str, tuple[float, dict[str, str]]] = {}
 
     def configured(self) -> bool:
         try:
@@ -60,6 +76,8 @@ class HomeAdapter:
         except HomeError:
             return False
 
+    # ------------------------- model-visible contract -------------------------
+
     def handle(self, payload: object) -> dict[str, object]:
         if not isinstance(payload, dict):
             raise HomeError("HOME_REQUEST_INVALID", "home request must be an object")
@@ -68,8 +86,13 @@ class HomeAdapter:
             return self.list_devices()
         if action == "state" and set(payload) == {"action", "device"}:
             return self.read_state(payload.get("device"))
-        if action == "control" and set(payload) == {"action", "device", "command"}:
-            return self.control(payload.get("device"), payload.get("command"))
+        if action == "control" and set(payload) in (
+            {"action", "device", "command"},
+            {"action", "device", "command", "value"},
+        ):
+            return self.control(
+                payload.get("device"), payload.get("command"), payload.get("value"), "value" in payload,
+            )
         raise HomeError("HOME_REQUEST_INVALID", "unsupported home request")
 
     def list_devices(self) -> dict[str, object]:
@@ -97,17 +120,27 @@ class HomeAdapter:
             "label": spec["label"],
             "state": self._sanitize_state(state, spec["read"]),
         }
-
-    def control(self, alias: object, command: object) -> dict[str, object]:
+    def control(self, alias: object, command: object, value: object = None, value_present: bool = False) -> dict[str, object]:
         alias, spec = self._device(alias)
         if not isinstance(command, str) or not NAME_RE.fullmatch(command):
             raise HomeError("HOME_COMMAND_NOT_ALLOWED", "command is not allowed", 404)
         action = spec["actions"].get(command)
         if action is None:
-            # Deliberately indistinguishable from an unknown command outside the allowlist.
             raise HomeError("HOME_COMMAND_NOT_ALLOWED", "command is not allowed", 404)
+
         domain = spec["entity_id"].split(".", 1)[0]
-        body = {"entity_id": spec["entity_id"], **action["data"]}
+        body: dict[str, object] = {"entity_id": spec["entity_id"], **action["data"]}
+        if command == "set_speed":
+            if domain != "fan" or not value_present or isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                raise HomeError("HOME_VALUE_NOT_ALLOWED", "fan speed must be an integer from 0 to 100")
+            body["percentage"] = value
+        elif command == "set_volume":
+            if domain != "media_player" or not value_present or isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                raise HomeError("HOME_VALUE_NOT_ALLOWED", "speaker volume must be an integer from 0 to 100")
+            body["volume_level"] = value / 100
+        elif value_present:
+            raise HomeError("HOME_VALUE_NOT_ALLOWED", "this command does not accept a value")
+
         self._request_json("POST", f"/api/services/{domain}/{action['service']}", body)
         state = self._request_json("GET", f"/api/states/{spec['entity_id']}")
         return {
@@ -117,6 +150,255 @@ class HomeAdapter:
             "command": command,
             "state": self._sanitize_state(state, spec["read"]),
         }
+
+    # --------------------- Companion-only presentation API -------------------
+
+    def companion_devices(self) -> dict[str, object]:
+        """Return allowlisted devices as human-facing logical cards.
+
+        Temperature and humidity entities belonging to the same HA device are
+        intentionally merged into one logical card. Underlying entity IDs stay
+        private and model-visible aliases remain unchanged.
+        """
+        config = self._load_config()
+        states = self._state_map()
+        rows: list[dict[str, object]] = []
+        for alias, spec in config["devices"].items():
+            entity_id = spec["entity_id"]
+            state = states.get(entity_id)
+            attrs = state.get("attributes") if isinstance(state, dict) and isinstance(state.get("attributes"), dict) else {}
+            meta = self._entity_meta(entity_id)
+            domain = entity_id.split(".", 1)[0]
+            device_class = str(attrs.get("device_class") or "")[:40]
+            rows.append({
+                "alias": alias,
+                "label": spec["label"],
+                "domain": domain,
+                "device_class": device_class,
+                "device_id": meta["device_id"],
+                "device_name": meta["device_name"],
+                "room": meta["area_name"] or "未分区",
+                "commands": sorted(spec["actions"]),
+                "state": self._sanitize_state(state, spec["read"]) if state else {},
+            })
+
+        used: set[str] = set()
+        logical: list[dict[str, object]] = []
+        by_device: dict[str, list[dict[str, object]]] = {}
+        for row in rows:
+            device_id = str(row["device_id"] or "")
+            if device_id:
+                by_device.setdefault(device_id, []).append(row)
+
+        for device_id, members in by_device.items():
+            temps = [x for x in members if x["domain"] == "sensor" and x["device_class"] == "temperature"]
+            hums = [x for x in members if x["domain"] == "sensor" and x["device_class"] == "humidity"]
+            if not temps or not hums:
+                continue
+            temp, hum = temps[0], hums[0]
+            used.update((str(temp["alias"]), str(hum["alias"])))
+            label = str(temp["device_name"] or hum["device_name"] or self._common_sensor_label(str(temp["label"]), str(hum["label"])))[:80]
+            logical.append({
+                "device": self._public_logical_id("climate", [str(temp["alias"]), str(hum["alias"])]),
+                "label": label or "温湿度计",
+                "room": str(temp["room"] or hum["room"] or "未分区")[:80],
+                "kind": "climate_sensor",
+                "controllable": False,
+                "commands": [],
+                "state": {
+                    "temperature": temp["state"].get("state"),
+                    "temperature_unit": temp["state"].get("unit_of_measurement"),
+                    "humidity": hum["state"].get("state"),
+                    "humidity_unit": hum["state"].get("unit_of_measurement"),
+                },
+            })
+
+        for row in rows:
+            if row["alias"] in used:
+                continue
+            logical.append(self._logical_from_row(row))
+
+        logical.sort(key=lambda item: (str(item.get("room") or ""), str(item.get("label") or "")))
+        return {"status": "OK", "devices": logical}
+
+    def discover_candidates(self) -> dict[str, object]:
+        candidates, unsupported_count = self._discover_internal()
+        public = [{
+            "candidate_id": item["candidate_id"],
+            "label": item["label"],
+            "room": item["room"],
+            "kind": item["kind"],
+            "capabilities": list(item["capabilities"]),
+        } for item in candidates[:MAX_DISCOVERY_CANDIDATES]]
+        return {"status": "OK", "candidates": public, "unsupported_count": unsupported_count}
+
+    def authorize_candidate(self, candidate_id: object) -> dict[str, object]:
+        if not isinstance(candidate_id, str) or not CANDIDATE_RE.fullmatch(candidate_id):
+            raise HomeError("HOME_CANDIDATE_NOT_FOUND", "candidate not found", 404)
+        candidates, _ = self._discover_internal()
+        candidate = next((item for item in candidates if item["candidate_id"] == candidate_id), None)
+        if candidate is None:
+            raise HomeError("HOME_CANDIDATE_NOT_FOUND", "candidate not found", 404)
+
+        config = self._load_config()
+        devices = dict(config["devices"])
+        members = candidate["members"]
+        if len(devices) + len(members) > MAX_DEVICES:
+            raise HomeError("HOME_CONFIG_FULL", "home allowlist is full", 409)
+        used = set(devices)
+        for member in members:
+            alias = self._new_alias(str(member["kind"]), str(member["entity_id"]), used)
+            used.add(alias)
+            devices[alias] = self._spec_for_member(member, str(candidate["label"]))
+        self._write_config({"version": 1, "devices": devices})
+        return {
+            "status": "OK",
+            "candidate_id": candidate_id,
+            "label": candidate["label"],
+            "kind": candidate["kind"],
+            "added": len(members),
+        }
+
+    # ---------------------------- discovery internals ------------------------
+
+    def _discover_internal(self) -> tuple[list[dict[str, object]], int]:
+        config = self._load_config()
+        existing = {str(spec["entity_id"]) for spec in config["devices"].values()}
+        states = self._all_states()
+        supported: list[dict[str, object]] = []
+        unsupported_count = 0
+        for state in states:
+            if not isinstance(state, dict) or not isinstance(state.get("entity_id"), str):
+                continue
+            entity_id = state["entity_id"]
+            if entity_id in existing or not ENTITY_ID_RE.fullmatch(entity_id):
+                continue
+            value = state.get("state")
+            if value in ("unknown", "unavailable"):
+                continue
+            domain = entity_id.split(".", 1)[0]
+            attrs = state.get("attributes") if isinstance(state.get("attributes"), dict) else {}
+            device_class = str(attrs.get("device_class") or "")[:40]
+            if domain == "sensor" and device_class not in ("temperature", "humidity"):
+                unsupported_count += 1
+                continue
+            if domain not in DISCOVERY_DOMAINS:
+                unsupported_count += 1
+                continue
+            meta = self._entity_meta(entity_id)
+            label = str(meta["device_name"] or attrs.get("friendly_name") or entity_id.split(".", 1)[1])[:80]
+            supported.append({
+                "entity_id": entity_id,
+                "domain": domain,
+                "device_class": device_class,
+                "device_id": meta["device_id"],
+                "label": label,
+                "room": str(meta["area_name"] or "未分区")[:80],
+            })
+
+        out: list[dict[str, object]] = []
+        consumed: set[str] = set()
+        grouped: dict[str, list[dict[str, object]]] = {}
+        for item in supported:
+            if item["domain"] == "sensor" and item["device_id"]:
+                grouped.setdefault(str(item["device_id"]), []).append(item)
+
+        for members in grouped.values():
+            temp = next((x for x in members if x["device_class"] == "temperature"), None)
+            hum = next((x for x in members if x["device_class"] == "humidity"), None)
+            if not temp or not hum:
+                continue
+            consumed.update((str(temp["entity_id"]), str(hum["entity_id"])))
+            label = str(temp["label"] or hum["label"] or "温湿度计")[:80]
+            out.append(self._candidate(
+                "climate_sensor", label, str(temp["room"] or hum["room"] or "未分区"),
+                [
+                    {**temp, "kind": "temperature"},
+                    {**hum, "kind": "humidity"},
+                ],
+                ["temperature", "humidity"],
+            ))
+
+        for item in supported:
+            if item["entity_id"] in consumed:
+                continue
+            domain = str(item["domain"])
+            if domain == "sensor":
+                kind = str(item["device_class"])
+                capabilities = [kind]
+                member_kind = kind
+            elif domain == "media_player":
+                kind, capabilities, member_kind = "speaker", ["play", "pause", "volume"], "speaker"
+            elif domain == "fan":
+                kind, capabilities, member_kind = "fan", ["on", "off", "speed"], "fan"
+            elif domain == "light":
+                kind, capabilities, member_kind = "light", ["on", "off"], "light"
+            else:
+                kind, capabilities, member_kind = "switch", ["on", "off"], "switch"
+            out.append(self._candidate(kind, str(item["label"]), str(item["room"]), [{**item, "kind": member_kind}], capabilities))
+
+        out.sort(key=lambda item: (str(item["room"]), str(item["label"])))
+        return out[:MAX_DISCOVERY_CANDIDATES], unsupported_count
+
+    def _candidate(self, kind: str, label: str, room: str, members: list[dict[str, object]], capabilities: list[str]) -> dict[str, object]:
+        entity_ids = sorted(str(item["entity_id"]) for item in members)
+        return {
+            "candidate_id": self._candidate_id(entity_ids),
+            "label": label[:80],
+            "room": room[:80] or "未分区",
+            "kind": kind,
+            "capabilities": capabilities,
+            "members": members,
+        }
+
+    def _candidate_id(self, entity_ids: list[str]) -> str:
+        token = self._read_token().encode("utf-8")
+        message = ("autumn-home-candidate-v1\0" + "\0".join(entity_ids)).encode("utf-8")
+        return hmac.new(token, message, hashlib.sha256).hexdigest()[:24]
+
+    def _new_alias(self, kind: str, entity_id: str, used: set[str]) -> str:
+        base_kind = {
+            "speaker": "speaker", "fan": "fan", "light": "light", "switch": "switch",
+            "temperature": "temperature", "humidity": "humidity",
+        }.get(kind, "device")
+        suffix = hashlib.sha256(entity_id.encode("utf-8")).hexdigest()[:8]
+        base = f"{base_kind}_{suffix}"
+        alias = base
+        counter = 2
+        while alias in used:
+            alias = f"{base}_{counter}"
+            counter += 1
+        return alias[:48]
+
+    def _spec_for_member(self, member: dict[str, object], logical_label: str) -> dict[str, object]:
+        entity_id = str(member["entity_id"])
+        kind = str(member["kind"])
+        if kind == "light":
+            return self._spec(logical_label, entity_id, ["state", "brightness"], {"on": "turn_on", "off": "turn_off"})
+        if kind == "switch":
+            return self._spec(logical_label, entity_id, ["state"], {"on": "turn_on", "off": "turn_off"})
+        if kind == "fan":
+            return self._spec(logical_label, entity_id, ["state", "percentage"], {"on": "turn_on", "off": "turn_off", "set_speed": "set_percentage"})
+        if kind == "speaker":
+            return self._spec(logical_label, entity_id, ["state", "volume_level", "media_title"], {"play": "media_play", "pause": "media_pause", "set_volume": "volume_set"})
+        if kind == "temperature":
+            return self._spec(logical_label + " · 温度", entity_id, ["state", "unit_of_measurement"], {})
+        if kind == "humidity":
+            return self._spec(logical_label + " · 湿度", entity_id, ["state", "unit_of_measurement"], {})
+        raise HomeError("HOME_CANDIDATE_NOT_FOUND", "candidate not supported", 404)
+
+    @staticmethod
+    def _spec(label: str, entity_id: str, read: list[str], actions: dict[str, str]) -> dict[str, object]:
+        return {
+            "label": label[:80],
+            "entity_id": entity_id,
+            "read": read,
+            "risk": "low",
+            "confirm": False,
+            "actions": {command: {"service": service} for command, service in actions.items()},
+        }
+
+    # ----------------------------- config + HA I/O ---------------------------
 
     def _device(self, alias: object):
         if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
@@ -139,6 +421,33 @@ class HomeAdapter:
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise HomeError("HOME_CONFIG_INVALID", "home allowlist is invalid", 503) from exc
         return self._validate_config(raw)
+
+    def _write_config(self, raw: dict[str, object]) -> None:
+        clean = self._validate_config(raw)
+        path = self.config_path
+        if path.exists() and path.is_symlink():
+            raise HomeError("HOME_CONFIG_INVALID", "home allowlist path must not be a symlink", 503)
+        parent = path.parent
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temp_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=parent, prefix=path.name + ".", delete=False) as handle:
+                temp_name = handle.name
+                json.dump(clean, handle, ensure_ascii=False, separators=(",", ":"))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp_name, 0o600)
+            os.replace(temp_name, path)
+            os.chmod(path, 0o600)
+        except OSError as exc:
+            raise HomeError("HOME_CONFIG_WRITE_FAILED", "home allowlist update failed", 500) from exc
+        finally:
+            if temp_name:
+                try:
+                    Path(temp_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _validate_config(self, raw: object) -> dict[str, object]:
         if not isinstance(raw, dict) or set(raw) != {"version", "devices"} or raw.get("version") != 1:
@@ -166,16 +475,15 @@ class HomeAdapter:
             if not isinstance(actions, dict) or len(actions) > MAX_ACTIONS:
                 raise HomeError("HOME_CONFIG_INVALID", "home allowlist is invalid", 503)
             clean_actions: dict[str, dict[str, object]] = {}
+            allowed_pairs = COMMAND_SERVICE.get(domain, {})
             for command, action in actions.items():
                 if not isinstance(command, str) or not NAME_RE.fullmatch(command) or not isinstance(action, dict):
                     raise HomeError("HOME_CONFIG_INVALID", "home allowlist is invalid", 503)
                 if set(action) - {"service", "data"} or set(action) < {"service"}:
                     raise HomeError("HOME_CONFIG_INVALID", "home allowlist is invalid", 503)
                 service, data = action["service"], action.get("data", {})
-                if not isinstance(service, str) or not NAME_RE.fullmatch(service):
-                    raise HomeError("HOME_CONFIG_INVALID", "home allowlist is invalid", 503)
-                if domain not in CONTROL_DOMAINS or service not in CONTROL_SERVICES:
-                    raise HomeError("HOME_CONFIG_INVALID", "home control is limited to low-risk light/switch commands", 503)
+                if not isinstance(service, str) or allowed_pairs.get(command) != service:
+                    raise HomeError("HOME_CONFIG_INVALID", "home command/service mapping is not allowed", 503)
                 if not isinstance(data, dict) or len(data) > 12:
                     raise HomeError("HOME_CONFIG_INVALID", "home allowlist is invalid", 503)
                 for key, value in data.items():
@@ -209,7 +517,65 @@ class HomeAdapter:
             raise HomeError("HOME_TOKEN_INVALID", "Home Assistant token is invalid", 503)
         return token
 
+    def _all_states(self) -> list[dict[str, object]]:
+        payload = self._request_json("GET", "/api/states")
+        if not isinstance(payload, list):
+            raise HomeError("HOME_ASSISTANT_FAILED", "Home Assistant returned invalid states", 502)
+        return [item for item in payload if isinstance(item, dict)]
+
+    def _state_map(self) -> dict[str, dict[str, object]]:
+        return {
+            str(item["entity_id"]): item
+            for item in self._all_states()
+            if isinstance(item.get("entity_id"), str) and ENTITY_ID_RE.fullmatch(str(item["entity_id"]))
+        }
+
+    def _entity_meta(self, entity_id: str) -> dict[str, str]:
+        now = self._clock()
+        cached = self._meta_cache.get(entity_id)
+        if cached and cached[0] > now:
+            return dict(cached[1])
+        if not ENTITY_ID_RE.fullmatch(entity_id):
+            return {"device_id": "", "device_name": "", "area_name": ""}
+        template = (
+            "{{ device_id('" + entity_id + "') or '' }}\n"
+            "{{ device_name('" + entity_id + "') or '' }}\n"
+            "{{ area_name('" + entity_id + "') or '' }}"
+        )
+        text = self._request_text("POST", "/api/template", {"template": template})
+        lines = text.splitlines()
+        while len(lines) < 3:
+            lines.append("")
+        meta = {
+            "device_id": self._clean_meta(lines[0], 128),
+            "device_name": self._clean_meta(lines[1], 80),
+            "area_name": self._clean_meta(lines[2], 80),
+        }
+        self._meta_cache[entity_id] = (now + META_CACHE_SECONDS, meta)
+        return dict(meta)
+
+    @staticmethod
+    def _clean_meta(value: str, limit: int) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
     def _request_json(self, method: str, path: str, body: dict[str, object] | None = None):
+        raw = self._request(method, path, body)
+        try:
+            payload = json.loads(raw)
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise HomeError("HOME_ASSISTANT_FAILED", "Home Assistant returned an invalid response", 502) from exc
+        if not isinstance(payload, (dict, list)):
+            raise HomeError("HOME_ASSISTANT_FAILED", "Home Assistant returned an invalid response", 502)
+        return payload
+
+    def _request_text(self, method: str, path: str, body: dict[str, object] | None = None) -> str:
+        raw = self._request(method, path, body)
+        try:
+            return raw.decode("utf-8")
+        except UnicodeError as exc:
+            raise HomeError("HOME_ASSISTANT_FAILED", "Home Assistant returned invalid text", 502) from exc
+
+    def _request(self, method: str, path: str, body: dict[str, object] | None = None) -> bytes:
         if not path.startswith("/api/"):
             raise HomeError("HOME_ADAPTER_INVALID", "invalid Home Assistant path", 500)
         token = self._read_token()
@@ -220,7 +586,7 @@ class HomeAdapter:
             method=method,
             headers={
                 "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
+                "Accept": "application/json, text/plain",
                 "Content-Type": "application/json",
             },
         )
@@ -228,16 +594,13 @@ class HomeAdapter:
             with self._open(request, timeout=4) as response:
                 if response.status not in (200, 201):
                     raise HomeError("HOME_ASSISTANT_FAILED", "Home Assistant rejected the request", 502)
-                payload = json.loads(response.read())
+                return response.read()
         except HTTPError as exc:
             status = 404 if exc.code == 404 and method == "GET" else 502
             code = "HOME_DEVICE_UNAVAILABLE" if status == 404 else "HOME_ASSISTANT_FAILED"
             raise HomeError(code, "Home Assistant request failed", status) from exc
-        except (OSError, URLError, TimeoutError, UnicodeError, json.JSONDecodeError) as exc:
+        except (OSError, URLError, TimeoutError) as exc:
             raise HomeError("HOME_ASSISTANT_UNAVAILABLE", "Home Assistant is unavailable", 502) from exc
-        if not isinstance(payload, (dict, list)):
-            raise HomeError("HOME_ASSISTANT_FAILED", "Home Assistant returned an invalid response", 502)
-        return payload
 
     @staticmethod
     def _sanitize_state(payload: object, allowed: list[str]) -> dict[str, object]:
@@ -254,3 +617,36 @@ class HomeAdapter:
             if isinstance(value, (str, int, float, bool, type(None))):
                 out[name] = value[:240] if isinstance(value, str) else value
         return out
+
+    @staticmethod
+    def _common_sensor_label(a: str, b: str) -> str:
+        for suffix in (" · 温度", " 温度", "Temperature", "temperature", " · 湿度", " 湿度", "Humidity", "humidity"):
+            a = a.replace(suffix, "").strip()
+            b = b.replace(suffix, "").strip()
+        return a if a and a == b else (a or b or "温湿度计")
+
+    @staticmethod
+    def _public_logical_id(prefix: str, aliases: list[str]) -> str:
+        digest = hashlib.sha256("\0".join(sorted(aliases)).encode("utf-8")).hexdigest()[:8]
+        return f"{prefix}_{digest}"
+
+    @staticmethod
+    def _logical_from_row(row: dict[str, object]) -> dict[str, object]:
+        domain = str(row["domain"])
+        device_class = str(row["device_class"])
+        kind = (
+            "speaker" if domain == "media_player" else
+            "fan" if domain == "fan" else
+            "light" if domain == "light" else
+            "switch" if domain == "switch" else
+            device_class if device_class in ("temperature", "humidity") else "sensor"
+        )
+        return {
+            "device": row["alias"],
+            "label": row["device_name"] or row["label"],
+            "room": row["room"],
+            "kind": kind,
+            "controllable": bool(row["commands"]),
+            "commands": list(row["commands"]),
+            "state": dict(row["state"]),
+        }

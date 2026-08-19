@@ -19,6 +19,30 @@
       "risk": "low",
       "confirm": false,
       "actions": {}
+    },
+    "room_fan": {
+      "label": "房间风扇（示例）",
+      "entity_id": "fan.replace_me",
+      "read": ["state", "percentage"],
+      "risk": "low",
+      "confirm": false,
+      "actions": {
+        "on": {"service": "turn_on"},
+        "off": {"service": "turn_off"},
+        "set_speed": {"service": "set_percentage"}
+      }
+    },
+    "room_speaker": {
+      "label": "房间音箱（示例）",
+      "entity_id": "media_player.replace_me",
+      "read": ["state", "volume_level", "media_title"],
+      "risk": "low",
+      "confirm": false,
+      "actions": {
+        "play": {"service": "media_play"},
+        "pause": {"service": "media_pause"},
+        "set_volume": {"service": "volume_set"}
+      }
     }
   }
 }

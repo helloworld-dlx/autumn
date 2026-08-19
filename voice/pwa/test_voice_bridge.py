@@ -646,4 +646,13 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertTrue(result["windowsDataAvailable"])
         self.assertEqual(result["jobs"], [])
 
+    def test_home_management_routes_require_companion_header_and_opaque_candidate(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn('"/api/home/discover"', source)
+        self.assertIn('"/api/home/authorize"', source)
+        self.assertIn('X-Autumn-Companion', source)
+        self.assertIn('candidateId', source)
+        self.assertIn('candidate_id', source)
+        self.assertNotIn('BRIDGE_TOKEN_PATH', source.split('def send_json',1)[-1])
+
 if __name__ == '__main__': unittest.main()

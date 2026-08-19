@@ -40,6 +40,8 @@ chmod 600 ~/.config/autumn/home.json
 
 Edit only the local `~/.config/autumn/home.json` and replace example entity IDs with the real Home Assistant entity IDs. Never commit this file or the token.
 
+For Companion-only management, open `Devices → Xiaomi Home → 发现新设备 → 加入 Autumn`. Discovery never authorizes a device automatically; HA entity IDs and the token remain device-local.
+
 V0.3 first cut intentionally accepts only low-risk `light.*` / `switch.*` controls (`turn_on`, `turn_off`, `toggle`) plus read-only sensors/attributes. Locks, alarm/security entities and cameras are rejected by the adapter even if accidentally added to the local config.
 
 ## 4. Acceptance smoke

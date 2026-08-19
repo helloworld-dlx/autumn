@@ -1,6 +1,6 @@
 {
   "name": "@local/jarvis-bridge-tool",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "description": "OpenClaw tool plugin exposing Autumn Bridge, Node, and Home tools.",

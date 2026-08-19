@@ -83,6 +83,19 @@ class BridgeTests(unittest.TestCase):
     runner.return_value=(200,{"request_id":"r","status":"success","output":{"ok":True},"error_code":None,"error_message":None})
     self.assertEqual(call("POST","/v1/execute",b'{"action":"system.ping","arguments":{}}',"t"*32)[0],200);runner.assert_called_once()
   finally:z.shutdown();z.server_close();thread.join()
+ def test_home_discovery_and_authorize_are_token_authenticated_and_exact(self):
+  (self.home/"key").write_bytes(b"k"*32);(self.home/"token").write_bytes(b"t"*32);z=BridgeServer(replace(self.c,listen_port=0),start_probe=False);thread=threading.Thread(target=z.serve_forever);thread.start()
+  try:
+   def call(path,body=None,token=None):
+    h={"Content-Type":"application/json"};
+    if token:h["X-Jarvis-Bridge-Token"]=token
+    x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST",path,body,h);r=x.getresponse();v=json.loads(r.read());x.close();return r.status,v
+   z.home.discover_candidates=lambda:{"status":"OK","candidates":[]}
+   self.assertEqual(call("/v1/internal/home/discover")[0],401);self.assertEqual(call("/v1/internal/home/discover",token="t"*32)[0],200)
+   z.home.authorize_candidate=lambda candidate:{"status":"OK","candidate_id":candidate,"added":1}
+   self.assertEqual(call("/v1/internal/home/authorize",b'{"candidate_id":"aaaaaaaaaaaaaaaaaaaaaaaa"}',"t"*32)[0],200)
+   self.assertEqual(call("/v1/internal/home/authorize",b'{"candidate_id":"aaaaaaaaaaaaaaaaaaaaaaaa","x":1}',"t"*32)[0],400)
+  finally:z.shutdown();z.server_close();thread.join()
  def test_windows_probe_registers_touches_and_recovers(self):
   from datetime import timedelta
   z=BridgeServer(replace(self.c,listen_port=0),start_probe=False)

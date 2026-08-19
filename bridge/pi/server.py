@@ -57,6 +57,10 @@ class Handler(BaseHTTPRequestHandler):
    if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length") not in (None,"0"):self.error(400,"BRIDGE_REQUEST_INVALID");return
    self.server.registry.touch("xiaomi15")
    self.send(200,{"status":"ok"});return
+  if p=="/v1/internal/home/discover":
+   self._do_home_discover();return
+  if p=="/v1/internal/home/authorize":
+   self._do_home_authorize();return
   if p=="/v1/home":
    self._do_home();return
   # Job routes — separate namespace, no ACTIONS check
@@ -74,15 +78,40 @@ class Handler(BaseHTTPRequestHandler):
    self._do_worker_control(p);return
   if p!="/v1/execute":self.error(404,"NOT_FOUND");return
   self._do_execute()
- def _do_home(self):
+ def _home_auth(self):
   try:t=load_secret(self.server.config.bridge_token_path)
-  except ValueError:self.error(503,"BRIDGE_KEY_UNAVAILABLE");return
-  if not token_matches(self.headers.get("X-Jarvis-Bridge-Token"),t):self.error(401,"BRIDGE_AUTH_FAILED");return
+  except ValueError:self.error(503,"BRIDGE_KEY_UNAVAILABLE");return False
+  if not token_matches(self.headers.get("X-Jarvis-Bridge-Token"),t):
+   self.error(401,"BRIDGE_AUTH_FAILED");return False
+  return True
+ def _do_home(self):
+  if not self._home_auth():return
   n=self.headers.get("Content-Length")
   if self.headers.get("Transfer-Encoding") or not n or not n.isdecimal() or not 0<int(n)<=8192:self.error(400,"BRIDGE_REQUEST_INVALID");return
   try:body=json.loads(self.rfile.read(int(n)).decode())
   except Exception:self.error(400,"BRIDGE_REQUEST_INVALID");return
   try:result=self.server.home.handle(body)
+  except HomeError as exc:
+   self.send(exc.status,{"status":"failed","error_code":exc.code,"message":exc.message});return
+  self.send(200,result)
+ def _do_home_discover(self):
+  if not self._home_auth():return
+  if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length") not in (None,"0"):
+   self.error(400,"BRIDGE_REQUEST_INVALID");return
+  try:result=self.server.home.discover_candidates()
+  except HomeError as exc:
+   self.send(exc.status,{"status":"failed","error_code":exc.code,"message":exc.message});return
+  self.send(200,result)
+ def _do_home_authorize(self):
+  if not self._home_auth():return
+  n=self.headers.get("Content-Length")
+  if self.headers.get("Transfer-Encoding") or not n or not n.isdecimal() or not 0<int(n)<=1024:
+   self.error(400,"BRIDGE_REQUEST_INVALID");return
+  try:body=json.loads(self.rfile.read(int(n)).decode())
+  except Exception:self.error(400,"BRIDGE_REQUEST_INVALID");return
+  if not isinstance(body,dict) or set(body)!={"candidate_id"} or not isinstance(body.get("candidate_id"),str):
+   self.error(400,"BRIDGE_REQUEST_INVALID");return
+  try:result=self.server.home.authorize_candidate(body["candidate_id"])
   except HomeError as exc:
    self.send(exc.status,{"status":"failed","error_code":exc.code,"message":exc.message});return
   self.send(200,result)
@@ -193,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
   self.server.registry.touch("pi5-core")
   try:
    home_configured=self.server.home.configured()
-   home_devices=self.server.home.list_devices().get("devices",[]) if home_configured else []
+   home_devices=self.server.home.companion_devices().get("devices",[]) if home_configured else []
   except HomeError:
    home_configured=False;home_devices=[]
   payload={"nodes":self.server.registry.list(),"windowsDataAvailable":False,"workersPaused":None,"jobs":[],"approvals":[],"home":{"configured":home_configured,"devices":home_devices}}

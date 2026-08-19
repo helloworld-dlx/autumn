@@ -241,3 +241,14 @@ test("autumn_home validates control shape before fetch and surfaces unknown alia
   assert.equal(missing.details.status, "failed");
   assert.equal(missing.details.reason, "HOME_DEVICE_NOT_FOUND");
 });
+
+test("autumn_home accepts bounded control value and rejects invalid values", async () => {
+  const seen=[];
+  const fetch=async (url,init)=>{seen.push(JSON.parse(init.body));return jsonResponse(200,{status:"OK",state:{state:"on",percentage:35}})};
+  const ok=await callBridgeHome({action:"control",device:"room_fan",command:"set_speed",value:35},{fetch});
+  assert.equal(ok.ok,true); assert.deepEqual(seen[0],{action:"control",device:"room_fan",command:"set_speed",value:35});
+  for(const value of [-1,101,1.5,true]){
+    const invalid=await callBridgeHome({action:"control",device:"room_fan",command:"set_speed",value},{fetch});
+    assert.equal(invalid.bridgeError,"HOME_REQUEST_INVALID");
+  }
+});
