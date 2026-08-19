@@ -87,6 +87,8 @@ class BridgeTests(unittest.TestCase):
   from datetime import timedelta
   z=BridgeServer(replace(self.c,listen_port=0),start_probe=False)
   try:
+   self.assertEqual(z.registry.get("windows-main")["online"],"UNKNOWN")
+   self.assertEqual(z.registry.get("xiaomi15")["online"],"UNKNOWN")
    with patch("jarvis_bridge.server.runner_health",return_value=True):
     self.assertTrue(z.probe_windows_once());first=z.registry.get("windows-main")
     self.assertEqual(first["capabilities"],WINDOWS_MAIN["capabilities"]);self.assertEqual(first["online"],"ONLINE")
@@ -102,6 +104,7 @@ class BridgeTests(unittest.TestCase):
   def call(path,body=None):
    x=http.client.HTTPConnection("127.0.0.1",z.server_address[1]);x.request("POST",path,body);r=x.getresponse();v=json.loads(r.read());x.close();return r.status,v
   try:
+   self.assertEqual(z.registry.get("xiaomi15")["online"],"UNKNOWN")
    status,_=call("/v1/internal/nodes/xiaomi15/touch");self.assertEqual(status,200);node=z.registry.get("xiaomi15")
    self.assertEqual(node["capabilities"],XIAOMI15["capabilities"]);self.assertIn("camera.capture",node["capabilities"]);self.assertEqual(node["node_version"],"companion-pwa-v19");self.assertEqual(node["online"],"RECENT")
    status,error=call("/v1/internal/nodes/other/touch");self.assertEqual(status,404);self.assertEqual(error["error_code"],"NOT_FOUND")
@@ -123,6 +126,7 @@ class BridgeTests(unittest.TestCase):
   self.assertEqual(registry.derive_presence("core",now-timedelta(days=30)),"ONLINE")
   self.assertEqual(registry.derive_presence("phone",now-timedelta(seconds=91)),"RECENT")
   self.assertEqual(registry.derive_presence("phone",now-timedelta(minutes=11)),"UNKNOWN")
+  known=registry.register_known(XIAOMI15);self.assertEqual(known["online"],"UNKNOWN");self.assertIsNone(registry.get("xiaomi15")["last_seen"])
  def test_node_registry_rejects_unknown_and_private_fields(self):
   registry=NodeRegistry()
   with self.assertRaises(ValueError):registry.upsert({**PI5_CORE,"last_seen":None,"token":"forbidden"})

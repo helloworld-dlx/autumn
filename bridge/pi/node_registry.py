@@ -60,6 +60,10 @@ def _validate(descriptor):
 
 class NodeRegistry:
  def __init__(self,clock=_now):self._clock=clock;self._nodes={}
+ def register_known(self,descriptor):
+  candidate={**descriptor,"last_seen":None};_validate(candidate)
+  self._nodes[descriptor["node_id"]]={key:value for key,value in descriptor.items() if key!="last_seen"};self._nodes[descriptor["node_id"]]["last_seen"]=None
+  return self.get(descriptor["node_id"])
  def upsert(self,descriptor):
   seen=_validate(descriptor) or self._clock()
   self._nodes[descriptor["node_id"]]={key:value for key,value in descriptor.items() if key!="last_seen"};self._nodes[descriptor["node_id"]]["last_seen"]=seen
@@ -73,7 +77,7 @@ class NodeRegistry:
  def list(self):return [self._public(node) for _,node in sorted(self._nodes.items())[:MAX_PUBLIC_NODES]]
  def _public(self,node):
   last_seen=node["last_seen"]
-  return {"protocol_version":node["protocol_version"],"node_id":node["node_id"],"node_type":node["node_type"],"node_version":node["node_version"],"online":self.derive_presence(node["node_type"],last_seen),"last_seen":last_seen.isoformat().replace("+00:00","Z"),"capabilities":list(node["capabilities"]),"metadata":dict(node["metadata"])}
+  return {"protocol_version":node["protocol_version"],"node_id":node["node_id"],"node_type":node["node_type"],"node_version":node["node_version"],"online":self.derive_presence(node["node_type"],last_seen),"last_seen":None if last_seen is None else last_seen.isoformat().replace("+00:00","Z"),"capabilities":list(node["capabilities"]),"metadata":dict(node["metadata"])}
  def derive_presence(self,node_type,last_seen):
   if last_seen is None:return "UNKNOWN"
   # The registry itself is hosted by pi5-core. If callers can read this

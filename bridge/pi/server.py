@@ -11,14 +11,13 @@ PROBE_INTERVAL_SECONDS=60
 class BridgeServer(ThreadingHTTPServer):
  daemon_threads=True;request_queue_size=8
  def __init__(self,c,start_probe=False):
-  self.config=c;self.registry=NodeRegistry();self.registry.upsert({**PI5_CORE,"last_seen":None});self.home=HomeAdapter();self._probe_stop=threading.Event();self._probe_thread=None;super().__init__((c.listen_host,c.listen_port),Handler)
+  self.config=c;self.registry=NodeRegistry();self.registry.upsert({**PI5_CORE,"last_seen":None});self.registry.register_known(WINDOWS_MAIN);self.registry.register_known(XIAOMI15);self.home=HomeAdapter();self._probe_stop=threading.Event();self._probe_thread=None;super().__init__((c.listen_host,c.listen_port),Handler)
   if start_probe:
    self._probe_thread=threading.Thread(target=self._probe_loop,name="windows-node-probe",daemon=True);self._probe_thread.start()
  def get_request(self):x,a=super().get_request();x.settimeout(15);return x,a
  def probe_windows_once(self):
   if not runner_health(self.config):return False
-  if self.registry.get("windows-main") is None:self.registry.upsert({**WINDOWS_MAIN,"last_seen":None})
-  else:self.registry.touch("windows-main")
+  self.registry.touch("windows-main")
   return True
  def _probe_loop(self):
   while not self._probe_stop.is_set():
@@ -56,8 +55,7 @@ class Handler(BaseHTTPRequestHandler):
   if p=="/v1/health":self.error(405,"METHOD_NOT_ALLOWED");return
   if p=="/v1/internal/nodes/xiaomi15/touch":
    if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length") not in (None,"0"):self.error(400,"BRIDGE_REQUEST_INVALID");return
-   if self.server.registry.get("xiaomi15") is None:self.server.registry.upsert({**XIAOMI15,"last_seen":None})
-   else:self.server.registry.touch("xiaomi15")
+   self.server.registry.touch("xiaomi15")
    self.send(200,{"status":"ok"});return
   if p=="/v1/home":
    self._do_home();return
@@ -212,8 +210,7 @@ class Handler(BaseHTTPRequestHandler):
   # transport evidence even if one application-level payload is not "success".
   # Keep Node Registry presence aligned with the same real request the Companion
   # just made, then refresh the nodes included in this response.
-  if self.server.registry.get("windows-main") is None:self.server.registry.upsert({**WINDOWS_MAIN,"last_seen":None})
-  else:self.server.registry.touch("windows-main")
+  self.server.registry.touch("windows-main")
   payload["nodes"]=self.server.registry.list()
   if jobs.get("status")=="success" and approvals.get("status")=="success" and workers.get("status")=="success":
    jobs_out=jobs.get("output",{}) if isinstance(jobs.get("output"),dict) else {}
