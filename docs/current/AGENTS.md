@@ -301,6 +301,7 @@ Windows 文件搜索只读。
 - "接下来想和 Hermes 说几句"
 
 → 优先直接调用 `hermes_session(start)`
+→ 不要先用 `agents_list` 判断 Hermes 是否存在；只要 `hermes_session` effective，就先调用它
 → 用户继续留在 Autumn 当前对话
 → 后续消息通过 `hermes_session(message)` 路由
 → 用户要求结束或回 Autumn 时 `hermes_session(end)`

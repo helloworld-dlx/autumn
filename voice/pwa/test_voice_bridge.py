@@ -259,6 +259,13 @@ class VoiceBridgeTests(unittest.TestCase):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
         self.assertIn('self.path == "/eyes.mjs"', source)
         self.assertIn('"eyes.mjs"', source)
+
+    def test_phase3e_node_and_mobile_modules_are_static_routes(self):
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertIn('self.path == "/nodes_ui.mjs"', source)
+        self.assertIn('self.path == "/mobile_shell.mjs"', source)
+        self.assertIn('"nodes_ui.mjs"', source)
+        self.assertIn('"mobile_shell.mjs"', source)
         self.assertIn('self.path == "/spatial_shell.mjs"', source)
         self.assertIn('"spatial_shell.mjs"', source)
 

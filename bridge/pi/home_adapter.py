@@ -263,18 +263,23 @@ class HomeAdapter:
 
     def _discover_internal(self) -> tuple[list[dict[str, object]], int]:
         config = self._load_config()
-        existing = {str(spec["entity_id"]) for spec in config["devices"].values()}
-        states = self._all_states()
+        existing_entity_ids = {str(spec["entity_id"]) for spec in config["devices"].values()}
+        existing_device_ids: set[str] = set()
+        for entity_id in existing_entity_ids:
+            meta = self._entity_meta(entity_id)
+            device_id = str(meta.get("device_id") or "")
+            if device_id:
+                existing_device_ids.add(device_id)
+
         supported: list[dict[str, object]] = []
         unsupported_count = 0
-        for state in states:
+        for state in self._all_states():
             if not isinstance(state, dict) or not isinstance(state.get("entity_id"), str):
                 continue
-            entity_id = state["entity_id"]
-            if entity_id in existing or not ENTITY_ID_RE.fullmatch(entity_id):
+            entity_id = str(state["entity_id"])
+            if entity_id in existing_entity_ids or not ENTITY_ID_RE.fullmatch(entity_id):
                 continue
-            value = state.get("state")
-            if value in ("unknown", "unavailable"):
+            if state.get("state") in ("unknown", "unavailable"):
                 continue
             domain = entity_id.split(".", 1)[0]
             attrs = state.get("attributes") if isinstance(state.get("attributes"), dict) else {}
@@ -286,59 +291,61 @@ class HomeAdapter:
                 unsupported_count += 1
                 continue
             meta = self._entity_meta(entity_id)
-            label = str(meta["device_name"] or attrs.get("friendly_name") or entity_id.split(".", 1)[1])[:80]
             supported.append({
                 "entity_id": entity_id,
                 "domain": domain,
                 "device_class": device_class,
-                "device_id": meta["device_id"],
-                "label": label,
-                "room": str(meta["area_name"] or "未分区")[:80],
+                "device_id": str(meta.get("device_id") or ""),
+                "label": str(meta.get("device_name") or attrs.get("friendly_name") or entity_id.split(".", 1)[1])[:80],
+                "room": str(meta.get("area_name") or "未分区")[:80],
             })
 
+        groups: dict[str, list[dict[str, object]]] = {}
+        for item in supported:
+            device_id = str(item["device_id"] or "")
+            key = "device:" + device_id if device_id else "entity:" + str(item["entity_id"])
+            groups.setdefault(key, []).append(item)
+
         out: list[dict[str, object]] = []
-        consumed: set[str] = set()
-        grouped: dict[str, list[dict[str, object]]] = {}
-        for item in supported:
-            if item["domain"] == "sensor" and item["device_id"]:
-                grouped.setdefault(str(item["device_id"]), []).append(item)
-
-        for members in grouped.values():
-            temp = next((x for x in members if x["device_class"] == "temperature"), None)
-            hum = next((x for x in members if x["device_class"] == "humidity"), None)
-            if not temp or not hum:
+        for key, members in groups.items():
+            if key.startswith("device:") and key.removeprefix("device:") in existing_device_ids:
                 continue
-            consumed.update((str(temp["entity_id"]), str(hum["entity_id"])))
-            label = str(temp["label"] or hum["label"] or "温湿度计")[:80]
-            out.append(self._candidate(
-                "climate_sensor", label, str(temp["room"] or hum["room"] or "未分区"),
-                [
-                    {**temp, "kind": "temperature"},
-                    {**hum, "kind": "humidity"},
-                ],
-                ["temperature", "humidity"],
-            ))
-
-        for item in supported:
-            if item["entity_id"] in consumed:
-                continue
-            domain = str(item["domain"])
-            if domain == "sensor":
-                kind = str(item["device_class"])
-                capabilities = [kind]
-                member_kind = kind
-            elif domain == "media_player":
-                kind, capabilities, member_kind = "speaker", ["play", "pause", "volume"], "speaker"
-            elif domain == "fan":
-                kind, capabilities, member_kind = "fan", ["on", "off", "speed"], "fan"
-            elif domain == "light":
-                kind, capabilities, member_kind = "light", ["on", "off"], "light"
-            else:
-                kind, capabilities, member_kind = "switch", ["on", "off"], "switch"
-            out.append(self._candidate(kind, str(item["label"]), str(item["room"]), [{**item, "kind": member_kind}], capabilities))
-
+            candidate = self._candidate_from_physical_group(members)
+            if candidate is not None:
+                out.append(candidate)
         out.sort(key=lambda item: (str(item["room"]), str(item["label"])))
         return out[:MAX_DISCOVERY_CANDIDATES], unsupported_count
+
+    def _candidate_from_physical_group(self, members: list[dict[str, object]]) -> dict[str, object] | None:
+        if not members:
+            return None
+
+        def first(domain: str):
+            return next((item for item in members if item["domain"] == domain), None)
+
+        label = str(next((item["label"] for item in members if item.get("label")), "Home Device"))[:80]
+        room = str(next((item["room"] for item in members if item.get("room")), "未分区"))[:80]
+        fan = first("fan")
+        if fan is not None:
+            return self._candidate("fan", label, room, [{**fan, "kind": "fan"}], ["on", "off", "speed"])
+        speaker = first("media_player")
+        if speaker is not None:
+            return self._candidate("speaker", label, room, [{**speaker, "kind": "speaker"}], ["play", "pause", "volume"])
+        light = first("light")
+        if light is not None:
+            return self._candidate("light", label, room, [{**light, "kind": "light"}], ["on", "off"])
+        temperature = next((item for item in members if item["domain"] == "sensor" and item["device_class"] == "temperature"), None)
+        humidity = next((item for item in members if item["domain"] == "sensor" and item["device_class"] == "humidity"), None)
+        if temperature is not None and humidity is not None:
+            return self._candidate("climate_sensor", label, room, [{**temperature, "kind": "temperature"}, {**humidity, "kind": "humidity"}], ["temperature", "humidity"])
+        switch = first("switch")
+        if switch is not None:
+            return self._candidate("switch", label, room, [{**switch, "kind": "switch"}], ["on", "off"])
+        if temperature is not None:
+            return self._candidate("temperature", label, room, [{**temperature, "kind": "temperature"}], ["temperature"])
+        if humidity is not None:
+            return self._candidate("humidity", label, room, [{**humidity, "kind": "humidity"}], ["humidity"])
+        return None
 
     def _candidate(self, kind: str, label: str, room: str, members: list[dict[str, object]], capabilities: list[str]) -> dict[str, object]:
         entity_ids = sorted(str(item["entity_id"]) for item in members)

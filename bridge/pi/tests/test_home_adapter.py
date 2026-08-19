@@ -166,12 +166,14 @@ class HomeFinalFeatureTests(unittest.TestCase):
             {"entity_id":"sensor.old_temp","state":"26.4","attributes":{"device_class":"temperature","unit_of_measurement":"°C","friendly_name":"客厅温度"}},
             {"entity_id":"sensor.old_hum","state":"58","attributes":{"device_class":"humidity","unit_of_measurement":"%","friendly_name":"客厅湿度"}},
             {"entity_id":"fan.bedroom","state":"off","attributes":{"percentage":0,"friendly_name":"卧室风扇"}},
+            {"entity_id":"switch.bedroom_fan_power","state":"off","attributes":{"friendly_name":"卧室风扇电源"}},
             {"entity_id":"media_player.speaker","state":"idle","attributes":{"volume_level":0.3,"friendly_name":"客厅音箱"}},
+            {"entity_id":"switch.speaker_power","state":"off","attributes":{"friendly_name":"客厅音箱电源"}},
             {"entity_id":"sensor.new_temp","state":"25.2","attributes":{"device_class":"temperature","unit_of_measurement":"°C","friendly_name":"卧室温度"}},
             {"entity_id":"sensor.new_hum","state":"60","attributes":{"device_class":"humidity","unit_of_measurement":"%","friendly_name":"卧室湿度"}},
             {"entity_id":"camera.secret","state":"idle","attributes":{"friendly_name":"Secret Camera"}},
         ]
-        self.meta={"sensor.old_temp":{"device_id":"dev_old","device_name":"客厅温湿度计","area_name":"客厅"},"sensor.old_hum":{"device_id":"dev_old","device_name":"客厅温湿度计","area_name":"客厅"},"fan.bedroom":{"device_id":"dev_fan","device_name":"卧室风扇","area_name":"卧室"},"media_player.speaker":{"device_id":"dev_speaker","device_name":"客厅音箱","area_name":"客厅"},"sensor.new_temp":{"device_id":"dev_new","device_name":"卧室温湿度计","area_name":"卧室"},"sensor.new_hum":{"device_id":"dev_new","device_name":"卧室温湿度计","area_name":"卧室"}}
+        self.meta={"sensor.old_temp":{"device_id":"dev_old","device_name":"客厅温湿度计","area_name":"客厅"},"sensor.old_hum":{"device_id":"dev_old","device_name":"客厅温湿度计","area_name":"客厅"},"fan.bedroom":{"device_id":"dev_fan","device_name":"卧室风扇","area_name":"卧室"},"switch.bedroom_fan_power":{"device_id":"dev_fan","device_name":"卧室风扇","area_name":"卧室"},"media_player.speaker":{"device_id":"dev_speaker","device_name":"客厅音箱","area_name":"客厅"},"switch.speaker_power":{"device_id":"dev_speaker","device_name":"客厅音箱","area_name":"客厅"},"sensor.new_temp":{"device_id":"dev_new","device_name":"卧室温湿度计","area_name":"卧室"},"sensor.new_hum":{"device_id":"dev_new","device_name":"卧室温湿度计","area_name":"卧室"}}
         self.router = self.Router(self.states, self.meta); self.adapter = HomeAdapter(self.config, self.token, opener=self.router)
     def tearDown(self): self.temp.cleanup()
     class Router:
@@ -209,6 +211,10 @@ class HomeFinalFeatureTests(unittest.TestCase):
     def test_unknown_candidate(self):
         with self.assertRaises(HomeError) as caught: self.adapter.authorize_candidate('a'*24)
         self.assertEqual(caught.exception.code,'HOME_CANDIDATE_NOT_FOUND')
+    def test_entity_without_device_id_remains_entity_scoped(self):
+        self.states.append({"entity_id":"light.orphan","state":"off","attributes":{"friendly_name":"独立灯"}})
+        disc=self.adapter.discover_candidates()['candidates']
+        self.assertEqual(sum(1 for item in disc if item['kind']=='light'),1)
 
 if __name__ == "__main__":
     unittest.main()

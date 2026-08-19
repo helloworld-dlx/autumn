@@ -1775,6 +1775,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/home_devices.mjs":
             data = (ROOT / "home_devices.mjs").read_bytes()
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
+        if self.path == "/nodes_ui.mjs":
+            data = (ROOT / "nodes_ui.mjs").read_bytes()
+            self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
+        if self.path == "/mobile_shell.mjs":
+            data = (ROOT / "mobile_shell.mjs").read_bytes()
+            self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return
         if self.path == "/sw.js":
             data = (ROOT / "sw.js").read_bytes()
             self.send_response(200); self.send_header("Content-Type", "text/javascript; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-cache"); self.end_headers(); self.wfile.write(data); return

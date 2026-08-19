@@ -52,7 +52,7 @@ assert.match(source, /Afterglow · local only/);
 assert.match(source, /function isPortableCompanion\(\)\{return \/Android\|iPhone\|iPad\/i\.test\(navigator\.userAgent\|\|''\)\}/);
 assert.match(source, /if\(!isPortableCompanion\(\)\)return;fetch\('\/api\/presence\/touch'/, "Xiaomi presence touch is mobile-gated");
 assert.doesNotMatch(source, /留给 Phase 3D/);
-assert.match(source, /Xiaomi 15 Camera \/ Remote Eyes 已可用/);
+assert.doesNotMatch(source, /感知入口|Xiaomi 15 Camera \/ Remote Eyes 已可用/);
 assert.match(source, /id="home-devices"/);
 assert.match(source, /home_devices\.mjs/);
 assert.match(source, /interactive-widget=resizes-content/, "mobile keyboard can resize the Chat viewport instead of covering the composer");
@@ -80,7 +80,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-  assert.match(worker, /autumn-companion-shell-v20/);
+  assert.match(worker, /autumn-companion-shell-v21/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -151,7 +151,7 @@ const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const worker = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
 
 test('service worker caches only the static Companion shell', () => {
-  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/spatial_shell.mjs"', '"/home_devices.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"', '"/assets/afterglow-home.webp"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/spatial_shell.mjs"', '"/home_devices.mjs"', '"/nodes_ui.mjs"', '"/mobile_shell.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"', '"/assets/afterglow-home.webp"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const privateRoute of ['/api/', '/health', '/audio/', 'IndexedDB', 'sync']) assert.doesNotMatch(worker, new RegExp(privateRoute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
@@ -169,6 +169,22 @@ test('Companion shell keeps health probes on foreground events without a Tailsca
   assert.match(html, /visibilitychange/);
   assert.match(html, /pageshow/);
   assert.match(html, /window\.addEventListener\('focus'/);
+});
+
+test('Phase 3E repair keeps Nodes friendly and mobile navigation drawer-only', async () => {
+  const nodes = await readFile(new URL('../nodes_ui.mjs', import.meta.url), 'utf8');
+  const mobile = await readFile(new URL('../mobile_shell.mjs', import.meta.url), 'utf8');
+  assert.match(nodes, /Pi 5 · Core/);
+  assert.match(nodes, /Windows · Runner/);
+  assert.match(nodes, /Xiaomi 15 · Phone/);
+  assert.match(nodes, /autumnRenderNodes/);
+  assert.doesNotMatch(nodes, /node_version|capabilities\.join|toISOString/);
+  assert.match(mobile, /mobile-dock\{display:none!important\}/);
+  assert.match(mobile, /autumn-mobile-nav-trigger/);
+  assert.match(mobile, /data-page|nav-btn/);
+  assert.match(html, /src="\/nodes_ui\.mjs"/);
+  assert.match(html, /src="\/mobile_shell\.mjs"/);
+  assert.doesNotMatch(html, /感知入口/);
 });
 
 test('Voice fails fast while Autumn is disconnected', () => {
