@@ -1,7 +1,7 @@
 services:
   homeassistant:
     container_name: homeassistant
-    image: ghcr.io/home-assistant/home-assistant:stable
+    image: ghcr.nju.edu.cn/home-assistant/home-assistant:stable
     volumes:
       - ${AUTUMN_HA_CONFIG:?set AUTUMN_HA_CONFIG}:/config
       - /etc/localtime:/etc/localtime:ro
