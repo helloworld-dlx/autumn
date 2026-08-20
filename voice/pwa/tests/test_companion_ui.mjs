@@ -187,6 +187,21 @@ test('Phase 3E repair keeps Nodes friendly and mobile navigation drawer-only', a
   assert.doesNotMatch(html, /感知入口/);
 });
 
+test('mobile Spatial Shell exposes Talk and utility popover', async () => {
+  const spatial = await readFile(new URL('../spatial_shell.mjs', import.meta.url), 'utf8');
+  assert.match(spatial, /spatial-mobile-talk/);
+  assert.match(spatial, /spatial-mobile-more/);
+  assert.match(spatial, /data-mobile-utility="activity"/);
+  assert.match(spatial, /data-mobile-utility="devices"/);
+  assert.match(spatial, /data-mobile-utility="eyes"/);
+  assert.match(spatial, /data-mobile-utility="files"/);
+  assert.match(spatial, /mobileTalk\.addEventListener\("click".*openTalk/s);
+  assert.match(spatial, /action === "activity" \|\| action === "devices".*openUtility\(action\)/s);
+  assert.match(spatial, /action === "eyes".*showEyes\(\)/s);
+  assert.match(spatial, /action === "files".*showFiles\(\)/s);
+  assert.match(spatial, /mobile-dock\{display:none!important\}/);
+});
+
 test('Voice fails fast while Autumn is disconnected', () => {
   assert.match(html, /Autumn is disconnected\. Connect first\./);
   assert.match(html, /if\(connectivityState!==\'CONNECTED\'\)\{show\('连接'/);

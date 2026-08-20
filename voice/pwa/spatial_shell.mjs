@@ -129,6 +129,14 @@ function installStyles() {
   .spatial-brand b{font-family:Georgia,"Songti SC",serif;font-size:20px;font-weight:600}
   .spatial-brand small{display:block;margin-top:2px;font-size:9px;letter-spacing:.06em;color:var(--muted-sp)}
   .spatial-top-actions{display:flex;gap:7px;align-items:center;justify-content:flex-end}
+  .spatial-mobile-actions{display:none}
+  .spatial-mobile-action{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fffaf6;border-radius:12px;width:34px;height:34px;display:grid;place-items:center;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 8px 22px rgba(50,28,47,.12)}
+  .spatial-mobile-action svg{width:17px;height:17px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .spatial-mobile-more{font-size:15px;letter-spacing:2px;padding:0 0 5px}
+  .spatial-mobile-menu{position:absolute;right:0;top:42px;z-index:85;display:none;grid-template-columns:repeat(2,minmax(90px,1fr));gap:6px;padding:8px;border-radius:16px;background:rgba(56,34,55,.72);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:var(--shadow-sp)}
+  .spatial-mobile-menu.open{display:grid}
+  .spatial-mobile-menu button{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:#fffaf6;border-radius:10px;padding:9px 10px;text-align:left;font-size:9px}
+  .spatial-mobile-menu button:hover,.spatial-mobile-menu button:focus-visible{background:rgba(255,255,255,.16);outline:none}
   #autumn-spatial-root .conn,#autumn-spatial-root .icon-btn{
     border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fffaf6;
     backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 8px 22px rgba(50,28,47,.12)
@@ -333,6 +341,7 @@ function installStyles() {
     .spatial-context-pop{left:8px;right:8px;top:50px;width:auto!important;max-height:72vh;overflow:auto}
     #autumn-spatial-root,#autumn-spatial-root.chat-collapsed{display:block}
     .spatial-rail{display:none}
+    .spatial-mobile-actions{display:flex;position:relative;gap:6px;align-items:center}
     .spatial-main{height:100vh;height:100dvh;padding:10px 10px 70px}
     .spatial-topbar{padding:0 2px}
     .spatial-brand small{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -438,7 +447,7 @@ function installSpatialShell() {
     <div class="spatial-ambient-plane a"></div><div class="spatial-ambient-plane b"></div>
     <aside class="spatial-rail"><div class="spatial-mark"></div><div id="spatial-rail-actions"></div><div class="spatial-rail-note">ONE<br>AUTUMN</div></aside>
     <main class="spatial-main">
-      <header class="spatial-topbar"><div class="spatial-brand"><b>Autumn</b><small>Afterglow Spatial Interface · One Space</small></div><div class="spatial-top-actions" id="spatial-top-actions"></div></header>
+      <header class="spatial-topbar"><div class="spatial-brand"><b>Autumn</b><small>Afterglow Spatial Interface · One Space</small></div><div class="spatial-top-actions" id="spatial-top-actions"><div class="spatial-mobile-actions" id="spatial-mobile-actions"><button type="button" class="spatial-mobile-action spatial-mobile-talk" id="spatial-mobile-talk" aria-label="打开 Talk" title="打开 Talk"></button><button type="button" class="spatial-mobile-action spatial-mobile-more" id="spatial-mobile-more" aria-label="更多功能" aria-expanded="false" title="更多功能">•••</button><div class="spatial-mobile-menu" id="spatial-mobile-menu" role="menu"><button type="button" data-mobile-utility="activity" role="menuitem">Activity</button><button type="button" data-mobile-utility="devices" role="menuitem">Devices</button><button type="button" data-mobile-utility="eyes" role="menuitem">Eyes</button><button type="button" data-mobile-utility="files" role="menuitem">Files</button></div></div></div></header>
       <section class="spatial-field">
         <div class="spatial-toast" id="spatial-toast"></div>
         <header class="spatial-field-head">
@@ -800,6 +809,35 @@ function installSpatialShell() {
     drawerTitle.textContent = which === "activity" ? "Activity" : "Devices";
     if (which === "activity" || which === "devices") globalThis.autumnRefreshCompanionStatus?.();
     utilityDrawer.classList.add("open");
+  }
+
+  const mobileTalk = root.querySelector("#spatial-mobile-talk");
+  const mobileMore = root.querySelector("#spatial-mobile-more");
+  const mobileMenu = root.querySelector("#spatial-mobile-menu");
+  if (mobileTalk && mobileMore && mobileMenu) {
+    mobileTalk.innerHTML = RAIL_ICONS.talk;
+    const closeMobileMenu = () => {
+      mobileMenu.classList.remove("open");
+      mobileMore.setAttribute("aria-expanded", "false");
+    };
+    mobileTalk.addEventListener("click", () => { closeMobileMenu(); openTalk(); });
+    mobileMore.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const open = !mobileMenu.classList.contains("open");
+      mobileMenu.classList.toggle("open", open);
+      mobileMore.setAttribute("aria-expanded", String(open));
+    });
+    mobileMenu.querySelectorAll("[data-mobile-utility]").forEach((button) => button.addEventListener("click", () => {
+      const action = button.dataset.mobileUtility;
+      closeMobileMenu();
+      if (action === "activity" || action === "devices") openUtility(action);
+      else if (action === "eyes") showEyes();
+      else if (action === "files") showFiles();
+    }));
+    document.addEventListener("click", (event) => {
+      if (mobileMenu.classList.contains("open") && !mobileMenu.contains(event.target) && event.target !== mobileMore) closeMobileMenu();
+    });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeMobileMenu(); });
   }
 
   function closeUtility() {
