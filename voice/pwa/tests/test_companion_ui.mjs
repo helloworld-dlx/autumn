@@ -80,7 +80,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-  assert.match(worker, /autumn-companion-shell-v21/);
+assert.match(worker, /autumn-companion-shell-v22/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -189,8 +189,10 @@ test('Phase 3E repair keeps Nodes friendly and mobile navigation drawer-only', a
 
 test('mobile Spatial Shell exposes Talk and utility popover', async () => {
   const spatial = await readFile(new URL('../spatial_shell.mjs', import.meta.url), 'utf8');
+  const sw = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
   assert.match(spatial, /spatial-mobile-talk/);
   assert.match(spatial, /spatial-mobile-more/);
+  assert.match(spatial, /RAIL_ICONS\.talk.*<span>Talk<\/span>/s);
   assert.match(spatial, /data-mobile-utility="activity"/);
   assert.match(spatial, /data-mobile-utility="devices"/);
   assert.match(spatial, /data-mobile-utility="eyes"/);
@@ -200,6 +202,12 @@ test('mobile Spatial Shell exposes Talk and utility popover', async () => {
   assert.match(spatial, /action === "eyes".*showEyes\(\)/s);
   assert.match(spatial, /action === "files".*showFiles\(\)/s);
   assert.match(spatial, /mobile-dock\{display:none!important\}/);
+  assert.match(spatial, /safe-area-inset-top/);
+  assert.match(spatial, /safe-area-inset-bottom/);
+  assert.match(spatial, /\.spatial-brand\{min-width:0/);
+  assert.match(spatial, /#autumn-spatial-root \.conn\{width:34px;height:34px;padding:0;font-size:0/);
+  assert.match(spatial, /aria-controls="spatial-mobile-menu"/);
+  assert.match(sw, /autumn-companion-shell-v22/);
 });
 
 test('Voice fails fast while Autumn is disconnected', () => {

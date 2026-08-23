@@ -126,16 +126,19 @@ function installStyles() {
 
   .spatial-main{position:relative;z-index:2;min-width:0;padding:14px 16px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
   .spatial-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:40px}
+  .spatial-brand{min-width:0}
   .spatial-brand b{font-family:Georgia,"Songti SC",serif;font-size:20px;font-weight:600}
   .spatial-brand small{display:block;margin-top:2px;font-size:9px;letter-spacing:.06em;color:var(--muted-sp)}
-  .spatial-top-actions{display:flex;gap:7px;align-items:center;justify-content:flex-end}
+  .spatial-top-actions{display:flex;gap:7px;align-items:center;justify-content:flex-end;min-width:0;flex:0 0 auto}
   .spatial-mobile-actions{display:none}
-  .spatial-mobile-action{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fffaf6;border-radius:12px;width:34px;height:34px;display:grid;place-items:center;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 8px 22px rgba(50,28,47,.12)}
+  .spatial-mobile-action{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fffaf6;border-radius:12px;width:38px;height:38px;display:grid;place-items:center;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 8px 22px rgba(50,28,47,.12);touch-action:manipulation}
   .spatial-mobile-action svg{width:17px;height:17px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .spatial-mobile-talk{width:auto;min-width:60px;padding:0 10px;display:flex;align-items:center;justify-content:center;gap:6px}
+  .spatial-mobile-talk span{font-size:9px;letter-spacing:.02em;font-weight:650}
   .spatial-mobile-more{font-size:15px;letter-spacing:2px;padding:0 0 5px}
-  .spatial-mobile-menu{position:absolute;right:0;top:42px;z-index:85;display:none;grid-template-columns:repeat(2,minmax(90px,1fr));gap:6px;padding:8px;border-radius:16px;background:rgba(56,34,55,.72);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:var(--shadow-sp)}
+  .spatial-mobile-menu{position:absolute;right:0;top:46px;z-index:95;display:none;grid-template-columns:repeat(2,minmax(90px,1fr));gap:6px;min-width:196px;max-width:calc(100vw - 24px);padding:8px;border-radius:16px;background:rgba(56,34,55,.78);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:var(--shadow-sp)}
   .spatial-mobile-menu.open{display:grid}
-  .spatial-mobile-menu button{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:#fffaf6;border-radius:10px;padding:9px 10px;text-align:left;font-size:9px}
+  .spatial-mobile-menu button{min-height:38px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:#fffaf6;border-radius:10px;padding:9px 10px;text-align:left;font-size:9px;touch-action:manipulation}
   .spatial-mobile-menu button:hover,.spatial-mobile-menu button:focus-visible{background:rgba(255,255,255,.16);outline:none}
   #autumn-spatial-root .conn,#autumn-spatial-root .icon-btn{
     border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fffaf6;
@@ -341,10 +344,14 @@ function installStyles() {
     .spatial-context-pop{left:8px;right:8px;top:50px;width:auto!important;max-height:72vh;overflow:auto}
     #autumn-spatial-root,#autumn-spatial-root.chat-collapsed{display:block}
     .spatial-rail{display:none}
-    .spatial-mobile-actions{display:flex;position:relative;gap:6px;align-items:center}
-    .spatial-main{height:100vh;height:100dvh;padding:10px 10px 70px}
-    .spatial-topbar{padding:0 2px}
-    .spatial-brand small{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .spatial-mobile-actions{display:flex;position:relative;z-index:95;gap:6px;align-items:center}
+    .spatial-main{height:100vh;height:100dvh;padding:max(10px,env(safe-area-inset-top)) 10px max(70px,calc(env(safe-area-inset-bottom) + 60px))}
+    .spatial-topbar{padding:0 2px;gap:8px;min-width:0}
+    .spatial-brand{min-width:0;flex:1 1 auto}
+    .spatial-brand small{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .spatial-top-actions{flex:0 0 auto;gap:5px}
+    #autumn-spatial-root .conn{width:34px;height:34px;padding:0;font-size:0;display:grid;place-items:center;overflow:hidden}
+    #autumn-spatial-root .conn:before{margin-right:0}
     .spatial-field{border-radius:24px}
     .spatial-field-actions .spatial-chip-btn:nth-child(n+4){display:none}
     .spatial-canvas{inset:58px 10px 72px}
@@ -357,7 +364,7 @@ function installStyles() {
     .spatial-vision-object .eyes-stage{min-height:245px!important}
     .spatial-vision-object .eyes-controls{height:auto!important}
     .spatial-chat-host{
-      position:fixed;left:10px;right:10px;bottom:10px;z-index:60;height:min(48vh,470px);padding:0;transition:height .28s ease
+      position:fixed;left:10px;right:10px;bottom:max(10px,env(safe-area-inset-bottom));z-index:60;height:min(48vh,470px);padding:0;transition:height .28s ease
     }
     #autumn-spatial-root.mobile-chat-collapsed .spatial-chat-host{height:56px}
     #autumn-spatial-root.mobile-chat-collapsed .spatial-chat-host .chat-messages,
@@ -370,14 +377,19 @@ function installStyles() {
     .spatial-chat-host .chat-messages{padding:13px!important}
     .spatial-chat-host .chat-bottom{padding:0 10px 10px!important}
     .spatial-context-pop{position:fixed;left:12px;right:12px;top:max(64px,calc(env(safe-area-inset-top) + 54px));width:auto;max-height:56vh}
-    .spatial-talk-overlay{position:fixed;left:10px;right:10px;bottom:72px;width:auto;transform:none}
+    .spatial-talk-overlay{position:fixed;left:10px;right:10px;bottom:max(72px,calc(env(safe-area-inset-bottom) + 64px));width:auto;transform:none}
     .spatial-talk-card .talk-card{grid-template-columns:1fr auto!important;grid-template-rows:auto auto 22px!important}
     .spatial-talk-card .mode-switch{grid-column:1 / -1!important;grid-row:3!important;min-width:0!important}
     .spatial-talk-card .duskline{display:none!important}
     .spatial-talk-card .voice-button{grid-column:2!important;grid-row:1 / span 2!important}
     .spatial-talk-card .talk-label,.spatial-talk-card .talk-state{grid-column:1!important}
-    .spatial-utility-drawer{position:fixed;left:10px;right:10px;top:54px;bottom:10px;width:auto;transform:translateY(calc(100% + 24px))}
+    .spatial-utility-drawer{position:fixed;left:10px;right:10px;top:max(54px,calc(env(safe-area-inset-top) + 44px));bottom:max(10px,env(safe-area-inset-bottom));width:auto;transform:translateY(calc(100% + 24px))}
     .spatial-utility-drawer.open{transform:none}
+  }
+  @media(max-width:430px){
+    .spatial-brand small{display:none}
+    .spatial-brand b{font-size:18px}
+    .spatial-mobile-talk{min-width:56px;padding:0 9px}
   }
   `;
   document.head.append(style);
@@ -447,7 +459,7 @@ function installSpatialShell() {
     <div class="spatial-ambient-plane a"></div><div class="spatial-ambient-plane b"></div>
     <aside class="spatial-rail"><div class="spatial-mark"></div><div id="spatial-rail-actions"></div><div class="spatial-rail-note">ONE<br>AUTUMN</div></aside>
     <main class="spatial-main">
-      <header class="spatial-topbar"><div class="spatial-brand"><b>Autumn</b><small>Afterglow Spatial Interface · One Space</small></div><div class="spatial-top-actions" id="spatial-top-actions"><div class="spatial-mobile-actions" id="spatial-mobile-actions"><button type="button" class="spatial-mobile-action spatial-mobile-talk" id="spatial-mobile-talk" aria-label="打开 Talk" title="打开 Talk"></button><button type="button" class="spatial-mobile-action spatial-mobile-more" id="spatial-mobile-more" aria-label="更多功能" aria-expanded="false" title="更多功能">•••</button><div class="spatial-mobile-menu" id="spatial-mobile-menu" role="menu"><button type="button" data-mobile-utility="activity" role="menuitem">Activity</button><button type="button" data-mobile-utility="devices" role="menuitem">Devices</button><button type="button" data-mobile-utility="eyes" role="menuitem">Eyes</button><button type="button" data-mobile-utility="files" role="menuitem">Files</button></div></div></div></header>
+      <header class="spatial-topbar"><div class="spatial-brand"><b>Autumn</b><small>Afterglow Spatial Interface · One Space</small></div><div class="spatial-top-actions" id="spatial-top-actions"><div class="spatial-mobile-actions" id="spatial-mobile-actions"><button type="button" class="spatial-mobile-action spatial-mobile-talk" id="spatial-mobile-talk" aria-label="打开 Talk" title="打开 Talk"></button><button type="button" class="spatial-mobile-action spatial-mobile-more" id="spatial-mobile-more" aria-label="更多功能" aria-controls="spatial-mobile-menu" aria-expanded="false" title="更多功能">•••</button><div class="spatial-mobile-menu" id="spatial-mobile-menu" role="menu"><button type="button" data-mobile-utility="activity" role="menuitem">Activity</button><button type="button" data-mobile-utility="devices" role="menuitem">Devices</button><button type="button" data-mobile-utility="eyes" role="menuitem">Eyes</button><button type="button" data-mobile-utility="files" role="menuitem">Files</button></div></div></div></header>
       <section class="spatial-field">
         <div class="spatial-toast" id="spatial-toast"></div>
         <header class="spatial-field-head">
@@ -815,7 +827,7 @@ function installSpatialShell() {
   const mobileMore = root.querySelector("#spatial-mobile-more");
   const mobileMenu = root.querySelector("#spatial-mobile-menu");
   if (mobileTalk && mobileMore && mobileMenu) {
-    mobileTalk.innerHTML = RAIL_ICONS.talk;
+    mobileTalk.innerHTML = `${RAIL_ICONS.talk}<span>Talk</span>`;
     const closeMobileMenu = () => {
       mobileMenu.classList.remove("open");
       mobileMore.setAttribute("aria-expanded", "false");
@@ -838,6 +850,7 @@ function installSpatialShell() {
       if (mobileMenu.classList.contains("open") && !mobileMenu.contains(event.target) && event.target !== mobileMore) closeMobileMenu();
     });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeMobileMenu(); });
+    globalThis.addEventListener?.("resize", closeMobileMenu, { passive: true });
   }
 
   function closeUtility() {
