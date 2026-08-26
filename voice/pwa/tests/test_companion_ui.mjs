@@ -80,7 +80,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-assert.match(worker, /autumn-companion-shell-v22/);
+assert.match(worker, /autumn-companion-shell-v23/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -207,7 +207,19 @@ test('mobile Spatial Shell exposes Talk and utility popover', async () => {
   assert.match(spatial, /\.spatial-brand\{min-width:0/);
   assert.match(spatial, /#autumn-spatial-root \.conn\{width:34px;height:34px;padding:0;font-size:0/);
   assert.match(spatial, /aria-controls="spatial-mobile-menu"/);
-  assert.match(sw, /autumn-companion-shell-v22/);
+  assert.match(sw, /autumn-companion-shell-v23/);
+  assert.match(spatial, /spatial-field-actions\{display:none!important\}/);
+  assert.match(spatial, /spatial-edge-stack\{display:none!important\}/);
+  assert.match(spatial, /function clearMobileObjects/);
+  assert.match(spatial, /function hideTalkVisual/);
+  assert.match(spatial, /showEyes\(\{ keepVoice: true \}\)/);
+});
+
+test('Home UI distinguishes not-configured from temporarily unavailable', async () => {
+  const home = await readFile(new URL('../home_devices.mjs', import.meta.url), 'utf8');
+  assert.match(home, /home\.configured!==true/);
+  assert.match(home, /home\.available===false/);
+  assert.match(home, /已配置，但当前暂时无法连接/);
 });
 
 test('Voice fails fast while Autumn is disconnected', () => {

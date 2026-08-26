@@ -220,12 +220,29 @@ class Handler(BaseHTTPRequestHandler):
  def _do_companion_status(self):
   # Serving this endpoint is itself fresh evidence that pi5-core is alive.
   self.server.registry.touch("pi5-core")
-  try:
-   home_configured=self.server.home.configured()
-   home_devices=self.server.home.companion_devices().get("devices",[]) if home_configured else []
-  except HomeError:
-   home_configured=False;home_devices=[]
-  payload={"nodes":self.server.registry.list(),"windowsDataAvailable":False,"workersPaused":None,"jobs":[],"approvals":[],"home":{"configured":home_configured,"devices":home_devices}}
+  home_configured=self.server.home.configured()
+  home_available=False
+  home_devices=[]
+  home_error=None
+  if home_configured:
+   try:
+    home_devices=self.server.home.companion_devices().get("devices",[])
+    home_available=True
+   except HomeError as exc:
+    home_error=exc.code if exc.code in ("HOME_ASSISTANT_UNAVAILABLE","HOME_ASSISTANT_FAILED","HOME_DEVICE_UNAVAILABLE") else "HOME_UNAVAILABLE"
+  payload={
+   "nodes":self.server.registry.list(),
+   "windowsDataAvailable":False,
+   "workersPaused":None,
+   "jobs":[],
+   "approvals":[],
+   "home":{
+    "configured":home_configured,
+    "available":home_available,
+    "devices":home_devices,
+    "error":home_error,
+   },
+  }
   try:key=load_secret(self.server.config.runner_key_path)
   except ValueError:
    self.send(200,payload);return

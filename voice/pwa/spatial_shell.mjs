@@ -348,18 +348,20 @@ function installStyles() {
     .spatial-main{height:100vh;height:100dvh;padding:max(10px,env(safe-area-inset-top)) 10px max(70px,calc(env(safe-area-inset-bottom) + 60px))}
     .spatial-topbar{padding:0 2px;gap:8px;min-width:0}
     .spatial-brand{min-width:0;flex:1 1 auto}
-    .spatial-brand small{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .spatial-brand small{display:none}
     .spatial-top-actions{flex:0 0 auto;gap:5px}
     #autumn-spatial-root .conn{width:34px;height:34px;padding:0;font-size:0;display:grid;place-items:center;overflow:hidden}
     #autumn-spatial-root .conn:before{margin-right:0}
     .spatial-field{border-radius:24px}
-    .spatial-field-actions .spatial-chip-btn:nth-child(n+4){display:none}
-    .spatial-canvas{inset:58px 10px 72px}
+    .spatial-field-actions{display:none!important}
+    .spatial-edge-stack{display:none!important}
+    .spatial-canvas{inset:58px 8px 8px}
     .spatial-idle-glass{width:84vw;height:200px}
-    .spatial-object.hero{left:0;top:3%;width:100%;height:65%}
-    .spatial-object.secondary.one{left:0;right:auto;top:auto;bottom:5%;width:48%;height:23%}
-    .spatial-object.secondary.two{right:0;bottom:5%;width:48%;height:23%}
-    .spatial-object.transient{right:0;top:2%;width:min(76vw,260px);min-height:126px}
+    .spatial-object.hero,.spatial-object.secondary.one,.spatial-object.secondary.two{
+      left:0!important;right:auto!important;top:0!important;bottom:auto!important;
+      width:100%!important;height:100%!important
+    }
+    .spatial-object.transient{display:none!important}
     .spatial-vision-object .eyes-shell{grid-template-columns:1fr!important;height:auto!important}
     .spatial-vision-object .eyes-stage{min-height:245px!important}
     .spatial-vision-object .eyes-controls{height:auto!important}
@@ -377,13 +379,22 @@ function installStyles() {
     .spatial-chat-host .chat-messages{padding:13px!important}
     .spatial-chat-host .chat-bottom{padding:0 10px 10px!important}
     .spatial-context-pop{position:fixed;left:12px;right:12px;top:max(64px,calc(env(safe-area-inset-top) + 54px));width:auto;max-height:56vh}
-    .spatial-talk-overlay{position:fixed;left:10px;right:10px;bottom:max(72px,calc(env(safe-area-inset-bottom) + 64px));width:auto;transform:none}
+    .spatial-talk-overlay{
+      position:fixed;left:10px;right:10px;
+      top:max(112px,calc(env(safe-area-inset-top) + 102px));bottom:auto;
+      width:auto;transform:none
+    }
     .spatial-talk-card .talk-card{grid-template-columns:1fr auto!important;grid-template-rows:auto auto 22px!important}
     .spatial-talk-card .mode-switch{grid-column:1 / -1!important;grid-row:3!important;min-width:0!important}
     .spatial-talk-card .duskline{display:none!important}
     .spatial-talk-card .voice-button{grid-column:2!important;grid-row:1 / span 2!important}
     .spatial-talk-card .talk-label,.spatial-talk-card .talk-state{grid-column:1!important}
-    .spatial-utility-drawer{position:fixed;left:10px;right:10px;top:max(54px,calc(env(safe-area-inset-top) + 44px));bottom:max(10px,env(safe-area-inset-bottom));width:auto;transform:translateY(calc(100% + 24px))}
+    .spatial-utility-drawer{
+      position:fixed;left:10px;right:10px;
+      top:max(104px,calc(env(safe-area-inset-top) + 94px));
+      bottom:max(76px,calc(env(safe-area-inset-bottom) + 66px));
+      width:auto;transform:translateY(calc(100% + 24px))
+    }
     .spatial-utility-drawer.open{transform:none}
   }
   @media(max-width:430px){
@@ -658,6 +669,14 @@ function installSpatialShell() {
 
   function presentObject(name) {
     if (!objects[name]) return;
+    if (isMobile()) {
+      for (const current of active) {
+        if (current !== name && current === "vision") globalThis.autumnEyesClose?.();
+      }
+      active = active.filter((current) => current === name);
+      stacked = [];
+      focusedName = null;
+    }
     if (focusedName && focusedName !== name) focusedName = null;
     stacked = stacked.filter((item) => item !== name);
     if (!active.includes(name)) active.push(name);
@@ -769,17 +788,51 @@ function installSpatialShell() {
     }, 120);
   }
 
+  function clearMobileObjects({ keepVision = false } = {}) {
+    if (!isMobile()) return;
+    if (!keepVision && active.includes("vision")) globalThis.autumnEyesClose?.();
+    active = [];
+    stacked = [];
+    focusedName = null;
+    statusObject.classList.add("hidden");
+    clearTimeout(statusTimer);
+    clearTimeout(statusShelfTimer);
+    edgeStack.replaceChildren();
+    applyAutoLayout();
+  }
+
+  function hideTalkVisual({ stop = true } = {}) {
+    if (stop && globalThis.autumnVoiceRunning?.()) document.querySelector("#stop")?.click();
+    talkOverlay.classList.remove("open");
+  }
+
   function showFiles() {
+    if (isMobile()) {
+      hideTalkVisual();
+      closeUtility();
+      clearMobileObjects();
+      root.classList.add("mobile-chat-collapsed");
+    }
     refreshFilesSnapshot();
     presentObject("files");
   }
 
-  function showEyes() {
+  function showEyes({ keepVoice = false } = {}) {
+    if (isMobile()) {
+      hideTalkVisual({ stop: !keepVoice });
+      closeUtility();
+      clearMobileObjects({ keepVision: true });
+      root.classList.add("mobile-chat-collapsed");
+    }
     globalThis.autumnEyesRefreshSources?.();
     presentObject("vision");
   }
 
   function showStatus() {
+    if (isMobile()) {
+      openUtility("devices");
+      return;
+    }
     globalThis.autumnRefreshCompanionStatus?.();
     clearTimeout(statusTimer);
     clearTimeout(statusShelfTimer);
@@ -805,17 +858,24 @@ function installSpatialShell() {
 
   function openTalk({ autostart = false } = {}) {
     closeUtility();
+    if (isMobile()) {
+      clearMobileObjects();
+      root.classList.add("mobile-chat-collapsed");
+    }
     talkOverlay.classList.add("open");
-    if (isMobile()) root.classList.add("mobile-chat-collapsed");
     if (autostart && !globalThis.autumnVoiceRunning?.()) document.querySelector("#start")?.click();
   }
 
   function closeTalk() {
-    if (globalThis.autumnVoiceRunning?.()) document.querySelector("#stop")?.click();
-    talkOverlay.classList.remove("open");
+    hideTalkVisual({ stop: true });
   }
 
   function openUtility(which) {
+    if (isMobile()) {
+      hideTalkVisual();
+      clearMobileObjects();
+      root.classList.add("mobile-chat-collapsed");
+    }
     utilityActivity.classList.toggle("active", which === "activity");
     utilityDevices.classList.toggle("active", which === "devices");
     drawerTitle.textContent = which === "activity" ? "Activity" : "Devices";
@@ -869,7 +929,12 @@ function installSpatialShell() {
     else root.classList.toggle("chat-collapsed");
   });
   document.querySelector("#chat-input")?.addEventListener("focus", () => {
-    if (isMobile()) root.classList.remove("mobile-chat-collapsed");
+    if (isMobile()) {
+      hideTalkVisual();
+      closeUtility();
+      clearMobileObjects();
+      root.classList.remove("mobile-chat-collapsed");
+    }
   });
 
   contextPop?.addEventListener("click", (event) => {
@@ -884,7 +949,7 @@ function installSpatialShell() {
   });
 
   root.querySelector("#spatial-talk-close").addEventListener("click", closeTalk);
-  root.querySelector("#spatial-talk-eyes").addEventListener("click", showEyes);
+  root.querySelector("#spatial-talk-eyes").addEventListener("click", () => showEyes({ keepVoice: true }));
   root.querySelector("#spatial-drawer-close").addEventListener("click", closeUtility);
   root.querySelector("#spatial-status-details").addEventListener("click", () => openUtility("devices"));
   root.querySelector("#spatial-files-refresh").addEventListener("click", refreshFilesSnapshot);

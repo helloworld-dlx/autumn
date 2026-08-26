@@ -9,6 +9,7 @@ import socket
 from jarvis_bridge.server import BridgeServer
 from jarvis_bridge.file_pull import publish_text_artifact
 from jarvis_bridge.node_registry import NodeRegistry,PI5_CORE,WINDOWS_MAIN,XIAOMI15,WINDOWS_HEALTH_TTL
+from jarvis_bridge.home_adapter import HomeError
 from unittest.mock import patch,ANY
 
 EXPECTED_ACTIONS = (
@@ -95,6 +96,28 @@ class BridgeTests(unittest.TestCase):
    z.home.authorize_candidate=lambda candidate:{"status":"OK","candidate_id":candidate,"added":1}
    self.assertEqual(call("/v1/internal/home/authorize",b'{"candidate_id":"aaaaaaaaaaaaaaaaaaaaaaaa"}',"t"*32)[0],200)
    self.assertEqual(call("/v1/internal/home/authorize",b'{"candidate_id":"aaaaaaaaaaaaaaaaaaaaaaaa","x":1}',"t"*32)[0],400)
+  finally:z.shutdown();z.server_close();thread.join()
+
+ def test_companion_home_keeps_configured_truth_when_ha_is_temporarily_unavailable(self):
+  z=BridgeServer(replace(self.c,listen_port=0),start_probe=False)
+  thread=threading.Thread(target=z.serve_forever);thread.start()
+  def call():
+   x=http.client.HTTPConnection("127.0.0.1",z.server_address[1])
+   x.request("GET","/v1/internal/companion/status")
+   r=x.getresponse();v=json.loads(r.read());x.close();return r.status,v
+  try:
+   z.home.configured=lambda:True
+   def unavailable():
+    raise HomeError("HOME_ASSISTANT_UNAVAILABLE","Home Assistant is unavailable",502)
+   z.home.companion_devices=unavailable
+   status,payload=call()
+   self.assertEqual(status,200)
+   self.assertTrue(payload["home"]["configured"])
+   self.assertFalse(payload["home"]["available"])
+   self.assertEqual(payload["home"]["devices"],[])
+   self.assertEqual(payload["home"]["error"],"HOME_ASSISTANT_UNAVAILABLE")
+   self.assertNotIn("token",json.dumps(payload).lower())
+   self.assertNotIn("entity_id",json.dumps(payload))
   finally:z.shutdown();z.server_close();thread.join()
  def test_windows_probe_registers_touches_and_recovers(self):
   from datetime import timedelta

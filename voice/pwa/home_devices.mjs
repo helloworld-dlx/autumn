@@ -72,6 +72,7 @@ if (host) {
   head.className = 'autumn-home-head';
   head.innerHTML = `<div class="autumn-home-head-copy"><p>状态优先。日常控制继续交给 Chat / Talk。</p></div><button class="autumn-home-discover" type="button">＋ 发现新设备</button>`;
   wrap.insertBefore(head, host);
+  const discoverButton = head.querySelector('.autumn-home-discover');
 
   const discovery = document.createElement('section');
   discovery.className = 'autumn-home-discovery';
@@ -144,9 +145,16 @@ if (host) {
   function render(home){
     host.replaceChildren();
     if(!home||home.configured!==true){
-      host.innerHTML='<div class="autumn-home-empty">Home Assistant / Xiaomi Home 尚未配置。</div>';
+      if(discoverButton){discoverButton.disabled=true;discoverButton.textContent='Home 未配置'}
+      host.innerHTML='<div class="autumn-home-empty">Home Assistant / Xiaomi Home 尚未配置，或本地 Home 配置当前不可读。</div>';
       return;
     }
+    if(home.available===false){
+      if(discoverButton){discoverButton.disabled=true;discoverButton.textContent='Home 暂不可用'}
+      host.innerHTML='<div class="autumn-home-empty">Home Assistant 已配置，但当前暂时无法连接。Autumn 的设备授权没有因此被删除；请检查 Home Assistant 服务 / Token 后刷新状态。</div>';
+      return;
+    }
+    if(discoverButton){discoverButton.disabled=false;discoverButton.textContent='＋ 发现新设备'}
     const devices=Array.isArray(home.devices)?home.devices:[];
     if(!devices.length){host.innerHTML='<div class="autumn-home-empty">还没有设备加入 Autumn。</div>';return}
     const rooms=new Map();
@@ -214,7 +222,7 @@ if (host) {
     }
   }
 
-  head.querySelector('.autumn-home-discover')?.addEventListener('click',()=>discovery.classList.contains('open')?discovery.classList.remove('open'):discover());
+  discoverButton?.addEventListener('click',()=>discovery.classList.contains('open')?discovery.classList.remove('open'):discover());
   overlay.addEventListener('click',event=>{if(event.target===overlay)closeDevice()});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overlay.classList.contains('open'))closeDevice()});
   globalThis.autumnRenderHomeDevices=render;
