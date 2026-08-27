@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   NOTIFICATION_TOOLS,
+  OPENCLAW_GATEWAY_RUNTIME,
   OPENCLAW_MODEL,
   buildCronCreateParams,
   finalizeCronCompletion,
@@ -60,8 +61,8 @@ test("Cron payload is one-shot, isolated, light-context, minimal-tool and target
   assert.equal(params.deleteAfterRun, true);
   assert.equal(params.sessionTarget, "isolated");
   assert.equal(params.payload.lightContext, true);
-  assert.deepEqual(params.payload.toolsAllow, ["jarvis_ping"]);
-  assert.deepEqual(NOTIFICATION_TOOLS, ["jarvis_ping"]);
+  assert.deepEqual(params.payload.toolsAllow, ["jarvis_system_status"]);
+  assert.deepEqual(NOTIFICATION_TOOLS, ["jarvis_system_status"]);
   assert.equal(params.payload.model, OPENCLAW_MODEL);
   assert.equal(params.delivery.mode, "announce");
   assert.equal(params.delivery.channel, "feishu");
@@ -71,10 +72,10 @@ test("Cron payload is one-shot, isolated, light-context, minimal-tool and target
   assert.doesNotMatch(params.payload.message, /COMMITMENTS\.md|ACTIVE_CONTEXT|Hermes|subagent|memory_search|memory_get/i);
 });
 
-test("notification policy exposes only registered read-only jarvis_ping", async () => {
+test("notification policy exposes only registered read-only jarvis_system_status", async () => {
   const source = await fs.readFile(new URL("../plugins/jarvis-bridge-tool/dist/index.js", import.meta.url), "utf8");
-  assert.match(source, /name:\s*["']jarvis_ping["']/);
-  assert.deepEqual(NOTIFICATION_TOOLS, ["jarvis_ping"]);
+  assert.match(source, /name:\s*["']jarvis_system_status["']/);
+  assert.deepEqual(NOTIFICATION_TOOLS, ["jarvis_system_status"]);
   assert.doesNotMatch(NOTIFICATION_TOOLS.join(" "), /hermes|memory|web|browser|file|program|exec|delegate|session/i);
 });
 
@@ -83,6 +84,29 @@ test("prompt contains only the exact short notification contract", () => {
   assert.match(prompt, /^只向用户发送下面这句话，不解释，不调用任何工具：/);
   assert.match(prompt, /commitment_id = CMT-20300810-001$/);
   assert.ok(Buffer.byteLength(prompt, "utf8") < 2000);
+});
+
+test("relative reminder intent is routed through the canonical schedule-time producer", async () => {
+  const agents = await fs.readFile(new URL("../../../docs/current/AGENTS.md", import.meta.url), "utf8");
+  assert.match(agents, /ACKNOWLEDGEMENT != SCHEDULING/);
+  assert.match(agents, /两分钟后提醒我/);
+  assert.match(agents, /agent:main:companion:\*/);
+  assert.match(agents, /tools\/commitments\.mjs add/);
+  assert.match(agents, /tools\/proactive_completion\.mjs schedule-time <commitment_id>/);
+  assert.match(agents, /禁止为了用户提醒直接调用 native `cron` tool/);
+  assert.match(agents, /`schedule-time` 失败后禁止改用 `schedule-systemd`/);
+  assert.match(agents, /只有返回 canonical `openclaw-cron:` binding 后才确认提醒/);
+  assert.match(agents, /`operator\.admin` 只是一项 scheduler transport 权限/);
+  assert.match(agents, /`deadline_doc_sync` 与其他既有 job 必须保持不变/);
+});
+
+test("canonical scheduler requests operator.admin only as its Gateway transport scope", async () => {
+  const source = await fs.readFile(new URL("./proactive_completion.mjs", import.meta.url), "utf8");
+  assert.equal(OPENCLAW_GATEWAY_RUNTIME, "/home/xyzlh/openclaw_workspace/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js");
+  assert.match(source, /import \{ fileURLToPath, pathToFileURL \} from "node:url"/);
+  assert.match(source, /scopes: \["operator\.admin"\]/);
+  assert.doesNotMatch(source, /gateway", "call"/);
+  assert.equal(source.match(/operator\.admin/g)?.length, 1);
 });
 
 test("successful schedule binds the returned Cron id", async () => {
@@ -210,8 +234,17 @@ test("unknown Cron id is ignored", async () => {
   assert.equal(store.record.status, "active");
 });
 
-test("cron_changed hook forwards only finished delivery metadata", async () => {
-  const pluginModule = await import("../plugins/proactive-cron-completion/dist/index.js");
+test("cron_changed hook forwards only finished delivery metadata", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "autumn-proactive-plugin-"));
+  t.after(async () => await fs.rm(root, { recursive: true, force: true }));
+  const pluginDir = path.join(root, "plugins", "proactive-cron-completion", "dist");
+  const toolsDir = path.join(root, "tools");
+  await fs.mkdir(pluginDir, { recursive: true });
+  await fs.mkdir(toolsDir, { recursive: true });
+  await fs.copyFile(new URL("../plugins/proactive-cron-completion/dist/index.js", import.meta.url), path.join(pluginDir, "index.js"));
+  await fs.copyFile(new URL("./proactive_completion.mjs", import.meta.url), path.join(toolsDir, "proactive_completion.mjs"));
+  await fs.copyFile(new URL("./commitments.mjs", import.meta.url), path.join(toolsDir, "commitments.mjs"));
+  const pluginModule = await import(`${pathToFileURL(path.join(pluginDir, "index.js")).href}?fixture=${Date.now()}`);
   const { handleCronChanged } = pluginModule;
   let registeredName;
   let registeredHandler;

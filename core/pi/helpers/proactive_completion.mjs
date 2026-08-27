@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   getCommitment,
   findCommitmentByExternalRef,
@@ -17,13 +17,13 @@ const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const helperPath = path.join(workspace, "tools", "proactive_completion.mjs");
 const fileSenderPath = path.join(workspace, "skills", "lark-file-sender", "send_file.sh");
 export const USER_SYSTEMD_DIR = path.join(os.homedir(), ".config", "systemd", "user");
-export const OPENCLAW_CLI = "/home/xyzlh/openclaw_workspace/node_modules/openclaw/dist/index.js";
+export const OPENCLAW_GATEWAY_RUNTIME = "/home/xyzlh/openclaw_workspace/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js";
 export const OPENCLAW_MODEL = "minimax/MiniMax-M2.7";
 export const OPENCLAW_CONFIG_PATH = "/home/xyzlh/.openclaw/openclaw.json";
 export const OPENCLAW_MAIN_SESSIONS_PATH = "/home/xyzlh/.openclaw/agents/main/sessions/sessions.json";
 export const TIME_OUTCOME = "Time trigger reached.";
 export const OPENCLAW_REF_PREFIX = "openclaw-cron:";
-export const NOTIFICATION_TOOLS = Object.freeze(["jarvis_ping"]);
+export const NOTIFICATION_TOOLS = Object.freeze(["jarvis_system_status"]);
 const ID = /^CMT-\d{8}-\d{3}$/;
 const CRON_ID = /^[A-Za-z0-9._-]{1,160}$/;
 const FEISHU_OPEN_ID = /^ou_[A-Za-z0-9]+$/;
@@ -180,9 +180,13 @@ export function buildCronCreateParams(commitment, trustedTarget, now = new Date(
 }
 
 async function gatewayCall(method, params) {
-  const { stdout } = await execFileAsync("/usr/bin/node", [OPENCLAW_CLI, "gateway", "call", method, "--json", "--params", JSON.stringify(params), "--timeout", "30000"], { timeout: 45000, maxBuffer: 1048576 });
-  try { return JSON.parse(stdout); }
-  catch { fail(`OpenClaw ${method} returned invalid JSON`); }
+  const { callGatewayFromCli } = await import(pathToFileURL(OPENCLAW_GATEWAY_RUNTIME).href);
+  return await callGatewayFromCli(
+    method,
+    { timeout: "30000", json: true },
+    params,
+    { scopes: ["operator.admin"], clientName: "gateway-client", mode: "backend", progress: false }
+  );
 }
 export const canonicalCronScheduler = {
   create: async (params) => await gatewayCall("cron.add", params),

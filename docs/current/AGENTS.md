@@ -413,6 +413,20 @@ Active Context 只记录近期 Focus、Waiting、Recent Decisions 与 Unfinished
 
 V0.2 production 使用 OpenClaw Cron/Reminder;systemd → lark-cli zero-token direct delivery 仅保留为 deferred optimization,不再作为默认路径或 Phase 2A blocker。
 
+`ACKNOWLEDGEMENT != SCHEDULING`。对于明确的未来时间提醒，包括“两分钟后提醒我……”“今晚八点提醒我……”“明天提醒我……”“到时候提醒我……”和“记得过会儿叫我……”，无论来自 Feishu 还是 `agent:main:companion:*`，Autumn MUST 按以下顺序执行：
+
+1. 将用户时间解析为具体、仍在未来的 ISO 8601 `due_at`；
+2. 通过 `node tools/commitments.mjs add ... --trigger-type time ... --due-at <due_at>` 创建真实 active time Commitment，并取得其 Commitment ID；
+3. 通过 `node tools/proactive_completion.mjs schedule-time <commitment_id>` 调用 canonical producer；
+4. 验证 producer 返回的 Commitment `external_ref` 与 Cron `externalRef` 相同，并严格匹配 `openclaw-cron:<cron_id>`；
+5. 只有 1-4 全部成功后，才可自然回复“好，两分钟后提醒你”或同义确认。
+
+任一步失败都必须立即停止并明确告诉用户提醒没有成功建立；`schedule-time` 失败后禁止改用 `schedule-systemd` 或任何 fallback。禁止仅回复“好，到时候提醒你”，也禁止为了用户提醒直接调用 native `cron` tool、直接执行 `cron.add`，或绕过 canonical producer 手工绑定 `COMMITMENTS.md`。
+
+Companion 示例：收到“2 分钟后提醒我：Reminder routing smoke”后，先用 `exec` 依次创建 time Commitment 并执行 canonical `schedule-time`；只有返回 canonical `openclaw-cron:` binding 后才确认提醒。模型文字确认、单独创建 Cron、或仅得到 Cron ID，都不算 scheduling 成功。
+
+canonical helper 为调用 `cron.add` / 回滚自己刚创建的 job 而使用的 `operator.admin` 只是一项 scheduler transport 权限，不等于 Autumn 获得任意管理 Gateway 或 Cron 的产品授权。Autumn 不得将该 scope 用于其他 Gateway 管理操作，不得读取、修改、禁用、运行或删除任何既有 Cron；`deadline_doc_sync` 与其他既有 job 必须保持不变。
+
 只有同时满足以下条件,Autumn 才能说"到时候我会主动提醒你":
 - active 的 `trigger_type=time` Commitment 已成功创建真实 one-shot OpenClaw Cron;
 - 必须通过 canonical `tools/proactive_completion.mjs schedule-time <commitment_id>` producer 创建并绑定 Cron;禁止绕过 helper 后直接编辑 `COMMITMENTS.md` 绑定;
@@ -423,7 +437,7 @@ producer 与 completion consumer 必须共同使用 `openclaw-cron:<cron_id>`;�
 
 通知 Cron 必须使用 isolated session、light context、MiniMax-M2.7、Feishu announce 与 delete-after-run;prompt 只包含已经确定的短通知文本和必要的 Commitment ID,不加载完整 `COMMITMENTS.md` 或 `ACTIVE_CONTEXT.md`。
 
-- 当前 OpenClaw 版本会拒绝 `toolsAllow=[]`;V0.2 单任务固定使用唯一兼容工具 `toolsAllow=["jarvis_ping"]`,prompt 仍明确禁止调用工具,正常通知预期 tool calls=0;
+- 当前 OpenClaw 版本会拒绝 `toolsAllow=[]`;V0.2 单任务固定使用已注册的只读占位工具 `toolsAllow=["jarvis_system_status"]`,prompt 仍明确禁止调用工具,正常通知预期 tool calls=0;
 - Feishu delivery target 必须由 adapter 从 main 的可信 direct-session 与 Feishu `allowFrom` 唯一交集解析为 `user:<openId>`;模型不能提供或覆盖 openId、chatId 或 channel;
 - notification turn 不使用 Hermes、memory、web/browser、文件/Windows 写入或执行工具、program tool 或 subagent;
 - `cron_changed` 只在 run status=ok 且 deliveryStatus=delivered 时将 Commitment 标记 completed;
