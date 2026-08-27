@@ -444,6 +444,9 @@ function copyNodeContent(source, target) {
 }
 
 function installSpatialShell() {
+  // Desktop keeps the full multi-object Spatial experience. Phones use the
+  // dedicated Chat-first Mobile Companion instead of a compressed Spatial UI.
+  if (globalThis.matchMedia?.("(max-width: 900px)")?.matches) return;
   if (document.querySelector("#autumn-spatial-root")) return;
   const legacyLayout = document.querySelector(".app > .layout");
   const chatShell = document.querySelector("#page-chat .chat-shell");

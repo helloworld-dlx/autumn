@@ -80,7 +80,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-assert.match(worker, /autumn-companion-shell-v23/);
+assert.match(worker, /autumn-companion-shell-v25/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -151,7 +151,7 @@ const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const worker = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
 
 test('service worker caches only the static Companion shell', () => {
-  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/spatial_shell.mjs"', '"/home_devices.mjs"', '"/nodes_ui.mjs"', '"/mobile_shell.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"', '"/assets/afterglow-home.webp"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const asset of ['"/"', '"/index.html"', '"/continuous_voice.mjs"', '"/spatial_shell.mjs"', '"/home_devices.mjs"', '"/nodes_ui.mjs"', '"/mobile_companion.mjs"', '"/manifest.webmanifest"', '"/icons/autumn-192.png"', '"/icons/autumn-512.png"', '"/assets/afterglow-home.webp"']) assert.match(worker, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const privateRoute of ['/api/', '/health', '/audio/', 'IndexedDB', 'sync']) assert.doesNotMatch(worker, new RegExp(privateRoute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
@@ -171,48 +171,42 @@ test('Companion shell keeps health probes on foreground events without a Tailsca
   assert.match(html, /window\.addEventListener\('focus'/);
 });
 
-test('Phase 3E repair keeps Nodes friendly and mobile navigation drawer-only', async () => {
+test('Nodes stay friendly while mobile uses the separate Chat-first Companion', async () => {
   const nodes = await readFile(new URL('../nodes_ui.mjs', import.meta.url), 'utf8');
-  const mobile = await readFile(new URL('../mobile_shell.mjs', import.meta.url), 'utf8');
+  const mobile = await readFile(new URL('../mobile_companion.mjs', import.meta.url), 'utf8');
   assert.match(nodes, /Pi 5 · Core/);
   assert.match(nodes, /Windows · Runner/);
   assert.match(nodes, /Xiaomi 15 · Phone/);
   assert.match(nodes, /autumnRenderNodes/);
   assert.doesNotMatch(nodes, /node_version|capabilities\.join|toISOString/);
-  assert.match(mobile, /mobile-dock\{display:none!important\}/);
-  assert.match(mobile, /autumn-mobile-nav-trigger/);
-  assert.match(mobile, /data-page|nav-btn/);
+  assert.match(mobile, /root\.id = "autumn-mobile-root"/);
+  assert.match(mobile, /mobile-conversation-hero/);
+  assert.match(mobile, /mobile-chat-host/);
   assert.match(html, /src="\/nodes_ui\.mjs"/);
-  assert.match(html, /src="\/mobile_shell\.mjs"/);
+  assert.match(html, /src="\/mobile_companion\.mjs"/);
+  assert.doesNotMatch(html, /src="\/mobile_shell\.mjs"/);
   assert.doesNotMatch(html, /感知入口/);
 });
 
-test('mobile Spatial Shell exposes Talk and utility popover', async () => {
+test('mobile uses Chat-first Companion instead of compressed Spatial', async () => {
+  const mobile = await readFile(new URL('../mobile_companion.mjs', import.meta.url), 'utf8');
   const spatial = await readFile(new URL('../spatial_shell.mjs', import.meta.url), 'utf8');
+  const index = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   const sw = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
-  assert.match(spatial, /spatial-mobile-talk/);
-  assert.match(spatial, /spatial-mobile-more/);
-  assert.match(spatial, /RAIL_ICONS\.talk.*<span>Talk<\/span>/s);
-  assert.match(spatial, /data-mobile-utility="activity"/);
-  assert.match(spatial, /data-mobile-utility="devices"/);
-  assert.match(spatial, /data-mobile-utility="eyes"/);
-  assert.match(spatial, /data-mobile-utility="files"/);
-  assert.match(spatial, /mobileTalk\.addEventListener\("click".*openTalk/s);
-  assert.match(spatial, /action === "activity" \|\| action === "devices".*openUtility\(action\)/s);
-  assert.match(spatial, /action === "eyes".*showEyes\(\)/s);
-  assert.match(spatial, /action === "files".*showFiles\(\)/s);
-  assert.match(spatial, /mobile-dock\{display:none!important\}/);
-  assert.match(spatial, /safe-area-inset-top/);
-  assert.match(spatial, /safe-area-inset-bottom/);
-  assert.match(spatial, /\.spatial-brand\{min-width:0/);
-  assert.match(spatial, /#autumn-spatial-root \.conn\{width:34px;height:34px;padding:0;font-size:0/);
-  assert.match(spatial, /aria-controls="spatial-mobile-menu"/);
-  assert.match(sw, /autumn-companion-shell-v23/);
-  assert.match(spatial, /spatial-field-actions\{display:none!important\}/);
-  assert.match(spatial, /spatial-edge-stack\{display:none!important\}/);
-  assert.match(spatial, /function clearMobileObjects/);
-  assert.match(spatial, /function hideTalkVisual/);
-  assert.match(spatial, /showEyes\(\{ keepVoice: true \}\)/);
+  assert.match(mobile, /mobile-talk-primary/);
+  assert.match(mobile, /data-mobile-open="activity"/);
+  assert.match(mobile, /data-mobile-open="devices"/);
+  assert.match(mobile, /data-mobile-open="eyes"/);
+  assert.match(mobile, /mobile-more-sheet/);
+  assert.match(mobile, /mobile-talk-eyes/);
+  assert.match(mobile, /function bootMobileCompanion/);
+  assert.match(mobile, /attempts < 60/);
+  assert.match(spatial, /if \(globalThis\.matchMedia\?\.\("\(max-width: 900px\)"\)\?\.matches\) return;/);
+  assert.match(index, /src="\/mobile_companion\.mjs"/);
+  assert.doesNotMatch(index, /src="\/mobile_shell\.mjs"/);
+  assert.ok(index.indexOf('src="/eyes.mjs"') < index.indexOf('src="/mobile_companion.mjs"'), 'Eyes must load before Mobile Companion');
+  assert.match(sw, /autumn-companion-shell-v25/);
+  assert.match(sw, /"\/mobile_companion\.mjs"/);
 });
 
 test('Home UI distinguishes not-configured from temporarily unavailable', async () => {
