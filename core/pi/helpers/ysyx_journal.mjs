@@ -15,7 +15,8 @@ const STATES = new Set(["not_started", "in_progress", "done"]);
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const fail = (message) => { throw new Error(message); };
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const DEFAULT_DATA_ROOT = path.resolve(here, "..", "..", "ysyx-learning");
+// Runtime helpers live in <OpenClaw workspace>/tools, matching agenda.mjs.
+export const DEFAULT_DATA_ROOT = path.resolve(here, "..", "ysyx-learning");
 
 function plain(value, field, { required = true, max = 600 } = {}) {
   if (value === null && !required) return null;
