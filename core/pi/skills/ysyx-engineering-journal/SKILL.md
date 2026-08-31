@@ -8,9 +8,23 @@ description: Record and review factual YSYX D/C learning logs with a three-quest
 
 只处理日志、状态、最近两周总结和 D/C 复习。不要分析技术问题、不要代写事实、不要连接 VM 或执行 Git。
 
+## First-turn hard gate
+
+对于任何“一生一芯”请求，在回答、总结、提问或引用阶段之前，必须先运行：
+
+```bash
+node tools/ysyx_journal.mjs journal_context "{}"
+```
+
+只把这个命令返回的 `state`、已有日志，以及用户**本轮明确说出**的内容当作 Journal 事实。不得把 `USER.md`、general memory、旧会话、profile、其他 Skill 或自己的推测当作学习事实；不要调用 memory 工具来补 Journal 内容。
+
+- 若 context 调用失败：如实报告“Journal context 暂不可读取”，停止，不猜测当前阶段、历史完成项或下一阶段。
+- 不得说 E/F 阶段已完成，也不得提及 E/F 阶段，除非用户本轮明确提出；本 Skill 的记录范围是 D/C。
+- `state` 显示 D1 `in_progress` 只表示当前所在阶段，绝不等于今天已经学习、完成任务或通过测试。
+
 ## Fixed flow
 
-先调用 `journal_context`。若用户第一条没有覆盖全部信息，只问下面缺失的问题，不重复已回答内容：
+在成功读取 context 后，若用户第一条没有覆盖全部信息，只问下面缺失的问题，不重复已回答内容：
 
 1. 今天学了多久？主要做到哪里了？
 2. 今天最值得以后记住的一个理解、发现或者坑是什么？
@@ -28,6 +42,8 @@ description: Record and review factual YSYX D/C learning logs with a three-quest
 - 不保存内部推理、命令记录或 VM 凭据。
 
 确认事实后仅调用 `journal_record`。同日已有记录时，如实提示，不能静默覆盖。
+
+只有在 `journal_record` 成功返回后，才能说“已记录”。绝不能把草稿、推测或模型回复当成已写入日志。
 
 ## Other intents
 
