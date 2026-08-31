@@ -45,6 +45,7 @@
 | Router Lite | PASS / FROZEN；One Autumn UX；无独立 Router service |
 | Portable Voice / Phase 2C | PASS / CLOSED / FROZEN；Quick + Continuous，共用既有 Gateway、Fast Mode、STT/TTS 链路；无硬 turn limit |
 | Companion Presence / Phase 3B | PASS / CLOSED / FROZEN；exact Conversation continuity、current-chat attachments、bounded generated artifacts、Activity Files、PWA shell v7 与 main memory index 已生产验收 |
+| YSYX Engineering Journal V0.1 Core | DEPLOYED / PASS；Pi canonical journal initialized at D1 with 0 learning days; Git VM integration DEFERRED; provider remains unavailable/manual fallback |
 | Python / Node | AUTHORIZATION_REQUIRED；production execution authorization path incomplete，不承诺确认后执行 |
 | OpenCode Worker | DEFERRED TO V0.3 — APPROVED SCOPE CHANGE；不是 PASS/不是 blocker |
 | Complexity Gate | DEFERRED；不是 PASS |
