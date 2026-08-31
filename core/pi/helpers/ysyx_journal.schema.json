@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "YSYX Engineering Journal V0.1 state.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "course_version", "timezone", "current_stage", "current_substage", "current_task", "current_goal", "last_learning_date", "total_learning_days", "total_learning_minutes", "milestones", "official_mandatory_task_mapping", "last_manual_git_checkpoint", "unresolved_items", "indexes"],
+  "properties": {"schema_version":{"const":1},"course_version":{"const":"v24.07"},"timezone":{"const":"Asia/Shanghai"},"total_learning_days":{"type":"integer","minimum":0},"total_learning_minutes":{"type":"integer","minimum":0}}
+}
