@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   getCommitment,
   findCommitmentByExternalRef,
+  cancelCommitment,
   completeCommitment,
   setCommitmentExternalRef
 } from "./commitments.mjs";
@@ -95,6 +96,7 @@ export async function deliverWithLark({ commitment, eventId: event, outcome }) {
 export const canonicalStore = {
   get: async (id) => await getCommitment(id),
   findByExternalRef: async (ref) => await findCommitmentByExternalRef(ref),
+  cancel: async (id) => await cancelCommitment(id),
   complete: async (id) => await completeCommitment(id),
   setExternalRef: async (id, ref) => await setCommitmentExternalRef(id, ref)
 };
@@ -213,6 +215,19 @@ export async function scheduleTimeCommitment({ commitmentId: rawId, store = cano
   }
 }
 
+export async function cancelTimeCommitment({ commitmentId: rawId, store = canonicalStore, scheduler = canonicalCronScheduler }) {
+  const id = commitmentId(rawId);
+  const record = await store.get(id);
+  if (!record) fail("commitment not found");
+  if (record.trigger_type !== "time") fail("commitment is not a time trigger");
+  if (!["active", "cancelled"].includes(record.status)) fail("commitment is not cancellable");
+  if (record.external_ref) {
+    if (!record.external_ref.startsWith(OPENCLAW_REF_PREFIX)) fail("commitment has an unsupported scheduler binding");
+    await scheduler.remove(cronId(record.external_ref.slice(OPENCLAW_REF_PREFIX.length)));
+  }
+  return { commitment: record.status === "active" ? await store.cancel(id) : record, recovered: record.status === "cancelled" };
+}
+
 export async function finalizeCronCompletion({ cronId: rawCronId, runStatus, deliveryStatus, delivered, store = canonicalStore }) {
   const jobId = cronId(rawCronId);
   const externalRef = openClawCronRef(jobId);
@@ -295,10 +310,14 @@ export async function main(argv = process.argv.slice(2)) {
     if (rest.length !== 1) fail("schedule-time requires exactly one commitment id");
     return print(await scheduleTimeCommitment({ commitmentId: rest[0] }));
   }
+  if (action === "cancel-time") {
+    if (rest.length !== 1) fail("cancel-time requires exactly one commitment id");
+    return print(await cancelTimeCommitment({ commitmentId: rest[0] }));
+  }
   if (action === "schedule-systemd") {
     if (rest.length !== 1) fail("schedule-systemd requires exactly one commitment id");
     return print(await bindTimeCommitmentSystemd({ commitmentId: rest[0] }));
   }
-  fail("usage: proactive_completion.mjs <schedule-time|schedule-systemd|fire>");
+  fail("usage: proactive_completion.mjs <schedule-time|cancel-time|schedule-systemd|fire>");
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`Error: ${error.message}\n`); process.exitCode = 1; });

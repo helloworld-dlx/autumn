@@ -14,7 +14,8 @@ import {
   openClawCronRef,
   renderCronPrompt,
   resolveTrustedFeishuTarget,
-  scheduleTimeCommitment
+  scheduleTimeCommitment,
+  cancelTimeCommitment
 } from "./proactive_completion.mjs";
 
 const future = "2030-08-10T12:00:00.000Z";
@@ -50,6 +51,11 @@ function memoryStore(initial) {
       if (id !== record.id || record.status !== "active") throw new Error("not active");
       record.status = "completed";
       this.completeCalls += 1;
+      return { ...record };
+    },
+    async cancel(id) {
+      if (id !== record.id || record.status !== "active") throw new Error("not active");
+      record.status = "cancelled";
       return { ...record };
     }
   };
@@ -87,7 +93,20 @@ test("prompt contains only the exact short notification contract", () => {
 });
 
 test("relative reminder intent is routed through the canonical schedule-time producer", async () => {
-  const agents = await fs.readFile(new URL("../../../docs/current/AGENTS.md", import.meta.url), "utf8");
+  const candidates = [
+    new URL("../../../docs/current/AGENTS.md", import.meta.url),
+    new URL("../AGENTS.md", import.meta.url)
+  ];
+  let agents;
+  for (const candidate of candidates) {
+    try {
+      agents = await fs.readFile(candidate, "utf8");
+      break;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  assert.ok(agents, "AGENTS.md must be available in source or runtime workspace layout");
   assert.match(agents, /ACKNOWLEDGEMENT != SCHEDULING/);
   assert.match(agents, /两分钟后提醒我/);
   assert.match(agents, /agent:main:companion:\*/);
@@ -157,6 +176,24 @@ test("binding failure removes created Cron and does not invent external_ref", as
   await assert.rejects(scheduleTimeCommitment({ commitmentId: store.record.id, store, scheduler, resolveTarget: async () => trustedTarget, now }), /fixture bind failure/);
   assert.equal(removed, "cron-fixture-002");
   assert.equal(store.record.external_ref, "");
+});
+
+test("cancellation removes the bound Cron before cancelling the Commitment", async () => {
+  const store = memoryStore(fixture({ external_ref: "openclaw-cron:cron-fixture-cancel" }));
+  let removed = "";
+  const scheduler = { async remove(id) { removed = id; } };
+  const result = await cancelTimeCommitment({ commitmentId: store.record.id, store, scheduler });
+  assert.equal(removed, "cron-fixture-cancel");
+  assert.equal(result.commitment.status, "cancelled");
+});
+
+test("cancellation recovery removes an orphan Cron for an already-cancelled Commitment", async () => {
+  const store = memoryStore(fixture({ status: "cancelled", external_ref: "openclaw-cron:cron-fixture-orphan" }));
+  let removed = "";
+  const result = await cancelTimeCommitment({ commitmentId: store.record.id, store, scheduler: { async remove(id) { removed = id; } } });
+  assert.equal(removed, "cron-fixture-orphan");
+  assert.equal(result.recovered, true);
+  assert.equal(result.commitment.status, "cancelled");
 });
 
 for (const [name, overrides, pattern] of [
