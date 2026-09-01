@@ -6,6 +6,43 @@ import voice_bridge as bridge
 
 class VoiceBridgeTests(unittest.TestCase):
 
+    def test_parse_multipart_preserves_audio_crlf_payload_bytes(self):
+        boundary = "----repair-boundary"
+        audio = b"RIFF\r\nWAVE-data\r\n"
+        body = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"repair.wav\"\r\n"
+            "Content-Type: audio/wav\r\n\r\n"
+        ).encode() + audio + (
+            f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"conversationId\"\r\n\r\nmain"
+            f"\r\n--{boundary}--\r\n"
+        ).encode()
+        parsed, filename, mime, conversation, new_conversation = bridge.parse_multipart(
+            f"multipart/form-data; boundary={boundary}", body
+        )
+        self.assertEqual(parsed, audio)
+        self.assertEqual((filename, mime, conversation, new_conversation), ("repair.wav", "audio/wav", "main", False))
+
+    def test_stream_route_defers_ndjson_until_the_first_turn_event(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        route = source[source.index('if self.path == "/api/turn-stream":'):source.index('if self.path != "/api/turn":')]
+        self.assertIn("def emit_event(payload: dict[str, object])", route)
+        self.assertIn("process_turn_stream(audio, name, mime, requested, emit_event", route)
+        self.assertLess(route.index("def emit_event(payload: dict[str, object])"), route.index("process_turn_stream(audio, name, mime, requested, emit_event"))
+
+    def test_transcription_retries_one_transient_503(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def read(self): return b'{"text":"pong"}'
+
+        error = bridge.HTTPError("https://api.siliconflow.cn", 503, "Service Unavailable", {}, None)
+        with patch.dict(os.environ, {"SILICONFLOW_API_KEY": "test-key"}, clear=False), \
+             patch.object(bridge, "urlopen", side_effect=[error, Response()]) as open_request, \
+             patch.object(bridge.time, "sleep") as sleep:
+            self.assertEqual(bridge.siliconflow_transcribe(b"audio", "a.wav", "audio/wav"), "pong")
+        self.assertEqual(open_request.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+
     def test_first_speakable_prefix_prefers_natural_sentence_boundary(self):
         chunk = bridge.first_speakable_prefix("我觉得可以先这样做。后面再继续解释。")
         self.assertEqual(chunk, ("我觉得可以先这样做。", len("我觉得可以先这样做。")))
