@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ysyx-journal-"));
@@ -41,3 +42,11 @@ test("D and C reviews keep their own logs", async (t) => { const { root, mod } =
 test("unverified mandatory mapping has no percentage and D6 remains optional", async (t) => { const { root, mod } = await fixture(t); const progress = await mod.journalProgress({ dataRoot: root }); assert.equal(progress.mandatory.counts, null); assert.equal(progress.milestones.D6.optional, true); });
 test("initialize creates the approved D1 state without inventing a learning day", async (t) => { const { root, mod } = await fixture(t); const state = await mod.journalInitialize({}, { dataRoot: root }); assert.equal(state.current_stage, "D"); assert.equal(state.current_substage, "D1"); assert.equal(state.current_task, "支持RV32IM的NEMU"); assert.equal(state.total_learning_days, 0); assert.equal(state.total_learning_minutes, 0); await assert.rejects(mod.journalInitialize({}, { dataRoot: root }), /already initialized/); });
 test("checkpoint recommendation is not execution and compiler success alone is not a signal", async (t) => { const { root, mod } = await fixture(t); const no = await mod.journalRecord(ordinary(undefined, { completed: ["成功编译。"] }), { dataRoot: root }); assert.equal(no.checkpoint.recommended, false); assert.equal(no.checkpoint.executed, false); });
+test("skill advertises narrow YSYX journal activation and protects generic notes", async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const skill = await fs.readFile(path.resolve(here, "..", "skills", "ysyx-engineering-journal", "SKILL.md"), "utf8");
+  assert.match(skill, /description:.*一生一芯.*YSYX.*journal_context/);
+  for (const phrase of ["记录一下一生一芯", "记录今天的一生一芯", "今天一生一芯学了", "帮我记一下今天 YSYX", "一生一芯学习日志", "我今天 D1 学了", "看看我一生一芯进度", "最近一生一芯学了什么", "帮我整理最近两周一生一芯", "帮我复习 D 阶段", "帮我复习 C 阶段"]) assert.match(skill, new RegExp(phrase));
+  assert.match(skill, /记录一下我今天的随想/);
+  assert.match(skill, /不是 general memory/);
+});

@@ -12,6 +12,7 @@
 **/*secrets*
 
 # Runtime and private state
+/ysyx-learning/
 node_modules/
 .venv/
 __pycache__/

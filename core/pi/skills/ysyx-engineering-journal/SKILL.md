@@ -1,12 +1,23 @@
 ---
 name: ysyx-engineering-journal
-version: 0.1.0
-description: Record and review factual YSYX D/C learning logs with a three-question interview.
+version: 0.1.1
+description: "Canonical 一生一芯 / YSYX D/C 学习日志：记录今天学习、学习进度、最近日志、两周总结、D/C 复习。命中这些组合时先 journal_context，不走 general memory。"
 ---
 
 # 一生一芯工程学习日志
 
 只处理日志、状态、最近两周总结和 D/C 复习。不要分析技术问题、不要代写事实、不要连接 VM 或执行 Git。
+
+## Activation
+
+以下表达（或同义组合）必须使用本 Skill，而不是 general memory：
+
+- “记录一下一生一芯”“记录今天的一生一芯”“今天一生一芯学了……”
+- “帮我记一下今天 YSYX”“一生一芯学习日志”“我今天 D1 学了……”
+- “看看我一生一芯进度”“最近一生一芯学了什么”“帮我整理最近两周一生一芯”
+- “帮我复习 D 阶段”“帮我复习 C 阶段”——仅在语境明确指一生一芯时。
+
+只有“记录一下我今天的随想”或一般“复习”等不含一生一芯 / YSYX 语境的请求，不属于本 Skill。
 
 ## First-turn hard gate
 
