@@ -54,7 +54,8 @@ test("workspace routing gives YSYX journal precedence over continuity memory", a
   const here = path.dirname(fileURLToPath(import.meta.url));
   const agents = await fs.readFile(path.resolve(here, "..", "..", "..", "docs", "current", "AGENTS.md"), "utf8");
   assert.match(agents, /YSYX Engineering Journal priority/);
-  assert.match(agents, /journal_context.*不得.*memory_search.*memory_get.*USER\.md/);
+  assert.match(agents, /第一步必须.*journal_context.*不得.*memory_search.*memory_get.*USER\.md/);
+  assert.ok(agents.indexOf("YSYX Engineering Journal priority") < agents.indexOf("### 10A. Continuity Lite"));
   assert.match(agents, /记录一下我今天的随想.*不属于此例外/);
   assert.match(agents, /你还记得我之前说过的某件事情吗？.*不属于此例外/);
 });
