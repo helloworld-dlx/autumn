@@ -32,6 +32,8 @@ assert.match(source, /id="chat-file-input" type="file" multiple/, "Chat exposes 
 assert.match(script, /MAX_ATTACHMENTS=3,MAX_ATTACHMENT_BYTES=8\*1024\*1024,MAX_ATTACHMENT_TOTAL=12\*1024\*1024/, "client file caps mirror Bridge policy");
 assert.match(script, /Promise\.all\(sendingFiles\.map\(encodeAttachment\)\)/, "selected files are encoded only for the submitted turn");
 assert.match(script, /JSON\.stringify\(\{conversationId:sendingConversation,message,attachments,newConversation\}\)/, "Chat forwards attachments and explicit first-turn provenance with the active Conversation");
+assert.match(script, /function chatFailureMessage\(failure\).*\^ATTACHMENT/, "only declared attachment errors use attachment guidance");
+assert.doesNotMatch(script, /没有发送成功。请确认 Autumn 已连接、附件符合限制后重试。/, "generic send failures are not mislabeled as attachment failures");
 assert.match(source, /fetch\('\/api\/companion\/status',\{cache:'no-store'\}\)/, "live Companion status is fetched on demand");
 assert.match(source, /\/api\/files\/returned\//, "returned files expose a download route in Activity");
 assert.doesNotMatch(source, /setInterval\(/, "Companion status does not add background polling");
@@ -80,7 +82,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-assert.match(worker, /autumn-companion-shell-v25/);
+assert.match(worker, /autumn-companion-shell-v26/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -205,7 +207,7 @@ test('mobile uses Chat-first Companion instead of compressed Spatial', async () 
   assert.match(index, /src="\/mobile_companion\.mjs"/);
   assert.doesNotMatch(index, /src="\/mobile_shell\.mjs"/);
   assert.ok(index.indexOf('src="/eyes.mjs"') < index.indexOf('src="/mobile_companion.mjs"'), 'Eyes must load before Mobile Companion');
-  assert.match(sw, /autumn-companion-shell-v25/);
+  assert.match(sw, /autumn-companion-shell-v26/);
   assert.match(sw, /"\/mobile_companion\.mjs"/);
 });
 

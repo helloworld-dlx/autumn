@@ -475,11 +475,18 @@ def siliconflow_transcribe(audio: bytes, filename: str, content_type: str) -> st
     body, boundary = multipart_body(audio, filename, content_type)
     request = Request("https://api.siliconflow.cn/v1/audio/transcriptions", data=body, method="POST",
                       headers={"Authorization": f"Bearer {key}", "Content-Type": f"multipart/form-data; boundary={boundary}"})
-    try:
-        with urlopen(request, timeout=90) as response:
-            payload = json.loads(response.read())
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise BridgeError("SILICONFLOW_FAILED", "Speech transcription failed") from exc
+    for attempt in range(2):
+        try:
+            with urlopen(request, timeout=90) as response:
+                payload = json.loads(response.read())
+            break
+        except HTTPError as exc:
+            if exc.code == 503 and attempt == 0:
+                time.sleep(0.5)
+                continue
+            raise BridgeError("SILICONFLOW_FAILED", "Speech transcription failed") from exc
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise BridgeError("SILICONFLOW_FAILED", "Speech transcription failed") from exc
     text = payload.get("text") if isinstance(payload, dict) else None
     if not isinstance(text, str) or not text.strip():
         raise BridgeError("SILICONFLOW_EMPTY", "Speech transcription was empty")
@@ -1460,7 +1467,13 @@ def parse_multipart(content_type: str, body: bytes) -> tuple[bytes, str, str, st
     for part in body.split(boundary)[1:]:
         if part.startswith(b"--"):
             break
-        head, separator, data = part.strip(b"\r\n").partition(b"\r\n\r\n")
+        # Remove multipart framing only.  strip(b"\r\n") corrupts valid
+        # audio when its payload itself begins or ends with CR/LF bytes.
+        if part.startswith(b"\r\n"):
+            part = part[2:]
+        if part.endswith(b"\r\n"):
+            part = part[:-2]
+        head, separator, data = part.partition(b"\r\n\r\n")
         if not separator:
             continue
         headers = {line.split(b":", 1)[0].decode().lower(): line.split(b":", 1)[1].decode().strip()
@@ -1957,8 +1970,15 @@ class Handler(BaseHTTPRequestHandler):
                 audio, name, mime, requested, new_conversation = parse_multipart(
                     self.headers.get("Content-Type", ""), self.rfile.read(length)
                 )
-                emit = self.begin_ndjson()
-                process_turn_stream(audio, name, mime, requested, emit, new_conversation=new_conversation)
+                # Do not commit the streaming response before STT has opened
+                # its upstream request. A pre-committed response made that
+                # request fail in the long-running bridge process.
+                def emit_event(payload: dict[str, object]) -> None:
+                    nonlocal emit
+                    if emit is None:
+                        emit = self.begin_ndjson()
+                    emit(payload)
+                process_turn_stream(audio, name, mime, requested, emit_event, new_conversation=new_conversation)
             except BridgeError as exc:
                 if emit is None:
                     self.send_json(exc.status, {"error": exc.code, "message": exc.message})
