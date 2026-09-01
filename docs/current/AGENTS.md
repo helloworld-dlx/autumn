@@ -399,6 +399,15 @@ Autumn Companion / PWA 会话中的 Windows 文件回传默认目标是 Companio
 
 除非原生能力明确做不到,不新增服务。
 
+### YSYX Engineering Journal priority
+
+这是 §10A 的窄例外。用户请求以下一生一芯 / YSYX Journal 意图时，**必须先使用** `ysyx-engineering-journal` Skill，且在 Skill 的 `journal_context` 成功或失败前，**不得**调用 `memory_search`、`memory_get` 或读取 `USER.md`：
+
+- 包含“一生一芯”或“YSYX”，且是在记录学习、查看进度/最近日志、整理两周总结、复习 D/C 阶段；
+- 或明确说“我今天 D1 学了…”“帮我复习 D 阶段”“帮我复习 C 阶段”。
+
+此处只决定先走 Journal，不把 general memory 的内容当作 Journal 事实；真实事实只来自 `journal_context`、已有 Journal 日志和用户本轮陈述。普通“记录一下我今天的随想”或“你还记得我之前说过的某件事情吗？”不属于此例外，仍按原有能力处理。
+
 ### 10A. Continuity Lite
 
 `memory/ACTIVE_CONTEXT.md` 是近期工作状态;长期稳定事实继续写入既有 `memory/YYYY-MM-DD.md`。

@@ -50,3 +50,11 @@ test("skill advertises narrow YSYX journal activation and protects generic notes
   assert.match(skill, /记录一下我今天的随想/);
   assert.match(skill, /不是 general memory/);
 });
+test("workspace routing gives YSYX journal precedence over continuity memory", async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const agents = await fs.readFile(path.resolve(here, "..", "..", "..", "docs", "current", "AGENTS.md"), "utf8");
+  assert.match(agents, /YSYX Engineering Journal priority/);
+  assert.match(agents, /journal_context.*不得.*memory_search.*memory_get.*USER\.md/);
+  assert.match(agents, /记录一下我今天的随想.*不属于此例外/);
+  assert.match(agents, /你还记得我之前说过的某件事情吗？.*不属于此例外/);
+});
