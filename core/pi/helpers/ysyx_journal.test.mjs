@@ -46,6 +46,8 @@ test("skill advertises narrow YSYX journal activation and protects generic notes
   const here = path.dirname(fileURLToPath(import.meta.url));
   const skill = await fs.readFile(path.resolve(here, "..", "skills", "ysyx-engineering-journal", "SKILL.md"), "utf8");
   assert.match(skill, /description:.*一生一芯.*YSYX.*journal_context/);
+  assert.match(skill, /node \/home\/xyzlh\/\.openclaw\/workspace\/tools\/ysyx_journal\.mjs journal_context/);
+  assert.match(skill, /不位于本 Skill 目录/);
   for (const phrase of ["记录一下一生一芯", "记录今天的一生一芯", "今天一生一芯学了", "帮我记一下今天 YSYX", "一生一芯学习日志", "我今天 D1 学了", "看看我一生一芯进度", "最近一生一芯学了什么", "帮我整理最近两周一生一芯", "帮我复习 D 阶段", "帮我复习 C 阶段"]) assert.match(skill, new RegExp(phrase));
   assert.match(skill, /记录一下我今天的随想/);
   assert.match(skill, /不是 general memory/);

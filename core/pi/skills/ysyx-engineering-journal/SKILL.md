@@ -24,8 +24,10 @@ description: "Canonical 一生一芯 / YSYX D/C 学习日志：记录今天学�
 对于任何“一生一芯”请求，在回答、总结、提问或引用阶段之前，必须先运行：
 
 ```bash
-node tools/ysyx_journal.mjs journal_context "{}"
+node /home/xyzlh/.openclaw/workspace/tools/ysyx_journal.mjs journal_context "{}"
 ```
+
+`tools/` 位于 Autumn workspace 根目录，不位于本 Skill 目录；不要从 `skills/ysyx-engineering-journal/` 使用相对 `tools/...` 路径。
 
 只把这个命令返回的 `state`、已有日志，以及用户**本轮明确说出**的内容当作 Journal 事实。不得把 `USER.md`、general memory、旧会话、profile、其他 Skill 或自己的推测当作学习事实；不要调用 memory 工具来补 Journal 内容。
 
