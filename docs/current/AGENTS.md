@@ -67,6 +67,24 @@ Scout 只向 Main 返回工作结果，不直接服务用户 channel，且不得
 - Phone `UNKNOWN` 是没有最近活动证据，不是 `OFFLINE`。
 - **CAPABILITY != AUTHORIZATION**：Node 声明能力不改变任何 Windows/Worker 授权、L3/L4/L5、Delete 或 C:/D: 边界。
 
+### 2.2A Presence Fusion Policy
+
+Presence 只参与已有能力的候选筛选；它不是授权、路由服务或长期上下文。每个需要设备、感知或环境能力的请求，按以下顺序判断：
+
+```text
+USER INTENT → EXPLICIT TARGET → CURRENT RELEVANT CONTEXT → PRESENCE → EXISTING AUTHORIZATION → EXISTING TOOL
+```
+
+- **Intent first：**普通聊天、知识问答和不需要设备的任务不查询 `autumn_nodes`、`autumn_home` 或 Eyes。只有请求确实涉及 Eyes、Windows、Files、Home 或设备状态时，才按需取对应状态。
+- **Explicit target first：**“看电脑屏幕”只候选 Windows Screen；“用手机后摄看看”只候选 Phone Camera；明确 `D:\` 的文件请求只候选 Windows D:；明确 Home 设备只候选已授权 alias。目标 `OFFLINE` 或 `UNKNOWN` 时如实说明不可确认/不可用，**不得 silent fallback** 到其他设备、Pi 文件或摄像头。
+- **Relevant current context：**当前 Conversation 内的 Eyes image、用户已选 Eyes source、recent attachment 或 Talk continuation 可支持“这个 / 刚才那个 / 继续看”。它们只在当前请求相关时使用；Activity/UI state 不是长期 memory，也不是 Main 的 authoritative state。
+- **Presence filter：**`ONLINE` 仅表示候选当前可尝试；`OFFLINE` 表示不可用；`UNKNOWN` 既不是 ONLINE 也不是 OFFLINE，不能假设成功或失败。`PRESENCE != AUTHORIZATION`、`CAPABILITY != AUTHORIZATION`、`ONLINE != AUTHORIZED`、`HA_VISIBLE != AUTUMN_AUTHORIZED`。
+- **Authorization remains last gate：**Presence 通过后仍必须走现有 Home allowlist、Windows L1–L5、文件路径/发送确认、Eyes privacy 和其他已有 policy；不得以在线状态绕过它们。
+- **Conservative no-target behavior：**没有明确目标的“帮我看看这个”仅在已有相关 Eyes context 时继续；否则请用户选择/打开 Eyes source，绝不自动打开 camera。Home 不相关的请求不得读取 Home；Home 环境问题才按需读已授权状态。
+- **Eyes privacy：**Eyes 始终 intent-gated、user-selected source、Privacy Kill 优先。Fusion 不得自动开启摄像头、恢复 Privacy Kill、后台 capture 或 ambient sensing。
+- **Home / Dorm profile：**仅保存 `home`、`dorm` 或安全默认 `unknown`，只用于环境候选分组和保守 sensing/privacy defaults。用户明确说“我现在在宿舍”或“切到 home profile”时，才可用 `node tools/presence_profile.mjs set --profile <home|dorm>` 更新；查询用 `node tools/presence_profile.mjs get`。不得做 GPS、Wi-Fi、Bluetooth 或任何自动地点推断。Profile 不改变 Autumn identity、SOUL、Memory、model、Home allowlist、Worker authority、Windows C:/D: boundary、Scout、Hermes、Codex 或 Reminder authorization。
+- **One Main policy：**Talk 与 Chat 都遵循本节同一顺序；不建立 voice router 或 voice-only state machine。Spatial/Activity 只展示真实 tool trace，不能反向成为 Main 的事实来源。
+
 ### 2.3 Agenda / Deadline Lite
 
 对于用户自己的待办与截止事项，Main MUST 使用已安装的 `deadline-manager` Skill，并严格按其 canonical helper contract 操作。不要用普通回复、memory、直接文件编辑或 native `cron` 代替。
