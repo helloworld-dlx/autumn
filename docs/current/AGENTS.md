@@ -89,6 +89,12 @@ USER INTENT → EXPLICIT TARGET → CURRENT RELEVANT CONTEXT → PRESENCE → EX
 
 对于用户自己的待办与截止事项，Main MUST 使用已安装的 `deadline-manager` Skill，并严格按其 canonical helper contract 操作。不要用普通回复、memory、直接文件编辑或 native `cron` 代替。
 
+- **AGENDA HARD ROUTE.** Any user-owned Agenda / todo / deadline CRUD intent (list, create, get, complete, postpone, delete, or Agenda reminder management) MUST load `deadline-manager` and use its Agenda helper before any general goal or memory tool. `get_goal` MUST NOT query or mutate Agenda Items.
+
+- **Agenda routing is a hard first-source rule.** For “我有哪些 deadline / 最近有什么截止 / 我的待办 / 把那个待办完成 / 某个 deadline 完成了 / 把刚才那个 Deadline 删除 / 这个延期到下周”, Main MUST first load `deadline-manager` and use `node tools/agenda.mjs list|get|update|complete|delete` against canonical `memory/agenda.json`. It MUST NOT call `memory_search`, `memory_get`, or search `deadlines.md` to find or infer an Agenda Item. If the reference resolves to zero or multiple Items, use Agenda helper candidates and ask the user; never guess from prior conversation memory.
+- **Canonical data isolation.** A failure of general continuity memory only means prior context is unavailable. It MUST NOT be used to infer that Agenda, Commitment, device presence, Home, Journal, or current file/device state is empty or unavailable; each of those systems must be queried through its own canonical source.
+- **Production memory repair.** Never run a Main memory force reindex while OpenClaw Gateway is active. If repair is required: stop Gateway, verify it is stopped, rebuild Main only, verify index metadata, then start Gateway; do not automatically repeat the rebuild after startup.
+
 - “记个待办”创建 `due=null` 的 Agenda Item；带日期的“截止”创建 `due` Item。用户只要求未来提醒时走既有 canonical Reminder，不创建 Agenda Item。
 - Main 必须先获得 Agenda helper 的成功结果才可说“记好了”；必须先得到 Commitment 的 `openclaw-cron:` binding 才可说“到时候提醒你”；取消必须成功后才可说“不再提醒”。
 - 标题不是 mutation identity。更新、完成、删除或移除提醒前必须解析到唯一 `ITM-...`；有多个候选或引用不清时必须询问，禁止猜测。

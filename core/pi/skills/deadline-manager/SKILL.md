@@ -1,12 +1,14 @@
 ---
 name: deadline-manager
-version: 2.0.0
-description: Manage a small personal Agenda of todos and deadlines through the canonical Agenda helper.
+version: 2.0.1
+description: Canonical owner for the user's Agenda, todos and deadlines: list, create, complete, postpone, delete, and manage Agenda reminders. 用户说待办、todo、deadline、截止、完成或标记完成事项时必须使用此 Skill 和 tools/agenda.mjs，而不是 get_goal 或 general memory。
 ---
 
 # Agenda / Deadline Manager
 
 This Skill manages one Agenda. A todo has `due=null`; a deadline has a due date.
+
+This Skill is the canonical owner of every user-owned Agenda CRUD intent. Before any general goal or memory tool, load this Skill and use `node tools/agenda.mjs`. `get_goal` is not an Agenda lookup or mutation tool.
 
 ## Safety contract
 
