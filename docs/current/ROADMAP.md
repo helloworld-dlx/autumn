@@ -6,6 +6,8 @@
 
 Frozen scope: model routing and Repair B, Hermes Consult/Session, Job Core, Direct Worker with bounded output, Codex Worker CREATE/MODIFY staging flow, Emergency Stop, headless Runner, and Router Lite.
 
+Current operational provider baseline is recorded separately from this frozen historical V0.2 scope: as of 2026-09-06, Autumn and normal subagents use MiMo `mimo-v2.5`, Hermes uses MiMo `mimo-v2.5-pro`, and automatic cross-provider fallback is disabled. Voice STT/TTS remains unchanged. See `docs/decisions/AUTUMN_MODEL_PROVIDER_MIGRATION_MIMO_2026_09.md`.
+
 ## V0.2 Phase 2C — Portable Voice
 
 **Status:** PASS / CLOSED / FROZEN (2026-08-13)

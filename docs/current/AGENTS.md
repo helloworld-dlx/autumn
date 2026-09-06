@@ -489,7 +489,7 @@ canonical helper 为调用 `cron.add` / 回滚自己刚创建的 job 而使用�
 
 producer 与 completion consumer 必须共同使用 `openclaw-cron:<cron_id>`;相关契约测试不通过时不得创建 production reminder。
 
-通知 Cron 必须使用 isolated session、light context、MiniMax-M2.7、Feishu announce 与 delete-after-run;prompt 只包含已经确定的短通知文本和必要的 Commitment ID,不加载完整 `COMMITMENTS.md` 或 `ACTIVE_CONTEXT.md`。
+通知 Cron 必须使用 isolated session、light context、mimo-v2.5、Feishu announce 与 delete-after-run;prompt 只包含已经确定的短通知文本和必要的 Commitment ID,不加载完整 `COMMITMENTS.md` 或 `ACTIVE_CONTEXT.md`。
 
 - 当前 OpenClaw 版本会拒绝 `toolsAllow=[]`;V0.2 单任务固定使用已注册的只读占位工具 `toolsAllow=["jarvis_system_status"]`,prompt 仍明确禁止调用工具,正常通知预期 tool calls=0;
 - Feishu delivery target 必须由 adapter 从 main 的可信 direct-session 与 Feishu `allowFrom` 唯一交集解析为 `user:<openId>`;模型不能提供或覆盖 openId、chatId 或 channel;

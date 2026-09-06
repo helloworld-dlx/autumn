@@ -30,6 +30,10 @@
 
 ## Current Product Truth
 
+### 2026-09-06 Operational Model Provider Migration
+
+`AUTUMN_MIMO_MODEL_MIGRATION = PASS / CLOSED`：生产默认路由已从 MiniMax M2.7 / M3 切换至 MiMo Token Plan 的 OpenAI-compatible provider。Autumn 与 normal subagents 使用 `mimo-v2.5`；Hermes 与 explicit high-reasoning candidate 使用 `mimo-v2.5-pro`；automatic cross-provider fallback 为 `[]`；DeepSeek 保持 manual-only；Codex OAuth 仍仅供 engineering worker，未改动。MiniMax provider 仅保留为本地 rollback reference，不参与自动 fallback；Voice STT/TTS provider 未变。详见 `docs/decisions/AUTUMN_MODEL_PROVIDER_MIGRATION_MIMO_2026_09.md`。
+
 用户正常只面对 Autumn。Router Lite 仅使用现有 context/tool rules，不存在 router service、classifier 或 classifier JSON。决策顺序为 Emergency Stop → explicit Hermes → self-answer → Direct Worker → Codex Worker。
 
 | Capability | Current status |
