@@ -68,6 +68,18 @@ node /home/xyzlh/.openclaw/workspace/tools/ysyx_journal.mjs journal_context "{}"
 
 helper 会以 date/substage/reason/message 记录已提示的 closure，避免同一节点在后续学习日重复提醒。用户之后明确说“我已经提交了 / 刚才 commit 了”时，可调用 `journal_checkpoint_confirmed`，只保存用户确认的 date、substage、message；没有真实 helper 时不要求、不猜测 hash，也不称已验证。
 
+## Optional substage closure review
+
+当用户已经明确完成某个 D/C substage、`journal_record` 成功且 milestone 是 `done` 后，先完成上面的 checkpoint 提示，再自然询问是否要做一个短阶段复盘。它不是第四个固定问题，用户可以说“之后再做”。
+
+仅在用户同意后调用 `journal_closure_context`，并最多提问：
+
+1. 这个阶段最值得留下的 2～3 个收获是什么？
+2. 还有什么感觉不牢、以后值得回来看的？
+3. 如果重新做一次，哪里会做得不一样？（可选）
+
+context 返回的既有日志只能用于提醒“之前记录过这些事实”，不能代替用户选择收获。用户回答后调用 `journal_closure_record`；它只会在已完成 stage 创建一次 `reviews/<stage>-closure.md`，同名文件存在时必须如实报告，不能覆盖。若阶段未 `done`，不能提前开始 closure。不得把 closure 写成 Git 成功、测试成功或任何用户未确认的结论。
+
 ## Other intents
 
 - “做到哪里了” → `journal_progress`

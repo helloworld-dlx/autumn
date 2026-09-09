@@ -2,7 +2,7 @@
 
 ## Review & Visualization
 
-状态：V0.2A 本地实现完成并经 synthetic fixture 验证；尚未部署 Pi、未读取真实 D1 数据、未启用 Web serving。
+状态：V0.2A/V0.2B 本地实现完成并经 synthetic fixture 验证；尚未部署 Pi、未读取真实 D1 数据、未启用 Web serving。
 
 V0.1 的目标是“低负担记录真实学习过程”；V0.2 的目标是“快速理解和复盘自己的长期学习轨迹”。它不替代学习、不评价学习表现，也不自动补全课程内容。
 
@@ -89,7 +89,7 @@ V0.2 第一阶段只生成本地 `dashboard.html`，不是公网网站。若用�
 推荐小步顺序：
 
 1. **V0.2A**：只实现 dashboard data model、deterministic static builder 和 HTML；用 synthetic fixtures 测试，不读取/写入真实 D1。
-2. **V0.2B**：实现 optional stage closure interview、`reviews/*.md` 和 Review page integration。
+2. **V0.2B**：实现 optional stage closure interview、`reviews/*.md` 和 Review page integration。（本地完成，待独立 Pi 部署授权。）
 3. **V0.2C**：Pi 部署、备份和真实 D1 read-only acceptance；只有另行批准时评估 private web access。
 
 成功标准：用户打开 Dashboard 后 30 秒内能回答“我现在做到哪里”“D1 怎么一路完成”“D1 真正理解过什么”“D1 哪些 Bug 值得复习”“下一步做什么”。同时必须保证：不污染 canonical data、不生成假学习事实/进度、不泄露真实日志到 GitHub、Dashboard 损坏可由 canonical files 重建、V0.1 写入流程继续正常。

@@ -80,6 +80,18 @@ test("unavailable Git provider does not prevent checkpoint suggestion or journal
   assert.equal(result.checkpoint.recommended, true); assert.equal(result.checkpoint.provider, "unavailable");
   await fs.access(path.join(root, "logs", "2026-09-02.md")); await fs.access(path.join(root, "state.json"));
 });
+test("completed substage closure preserves only the user's review answers and never overwrites", async (t) => {
+  const { root, mod } = await fixture(t); await mod.journalRecord(ordinary(undefined, { milestone_status: "done", checkpoint_signals: { substage_completed: true } }), { dataRoot: root });
+  const context = await mod.journalClosureContext({ stage: "D1", dataRoot: root }); assert.equal(context.learning_days, 1); assert.equal(context.logged_concepts[0].text, "先得到正确的 64 位乘积再取高位。");
+  const result = await mod.journalClosureRecord({ stage: "D1", highlights: ["先验证 64 位乘积。"], revisit: ["DIV 的边界。"], redo: null }, { dataRoot: root });
+  const review = await fs.readFile(path.join(root, "reviews", "D1-closure.md"), "utf8"); assert.equal(result.review_path, "reviews/D1-closure.md"); assert.match(review, /先验证 64 位乘积。/); assert.match(review, /DIV 的边界。/); assert.doesNotMatch(review, /三大收获/);
+  await assert.rejects(mod.journalClosureRecord({ stage: "D1", highlights: ["重复。"], revisit: [] }, { dataRoot: root }), /already exists/);
+});
+test("closure is unavailable until the user-confirmed milestone is done", async (t) => {
+  const { root, mod } = await fixture(t); await mod.journalRecord(ordinary(), { dataRoot: root });
+  await assert.rejects(mod.journalClosureContext({ stage: "D1", dataRoot: root }), /completed substage/);
+  await assert.rejects(mod.journalClosureRecord({ stage: "D1", highlights: ["x"], revisit: [] }, { dataRoot: root }), /completed substage/);
+});
 test("skill advertises narrow YSYX journal activation and protects generic notes", async () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const skill = await fs.readFile(path.resolve(here, "..", "skills", "ysyx-engineering-journal", "SKILL.md"), "utf8");

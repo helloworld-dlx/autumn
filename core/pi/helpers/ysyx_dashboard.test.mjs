@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { buildDashboard, dashboardData } from "./ysyx_dashboard.mjs";
-import { journalRecord } from "./ysyx_journal.mjs";
+import { journalClosureRecord, journalRecord } from "./ysyx_journal.mjs";
 
 async function fixture(t) {
   const parent = await fs.mkdtemp(path.join(os.tmpdir(), "ysyx-dashboard-"));
@@ -33,6 +33,11 @@ test("dashboard embeds journal text safely without creating executable markup", 
   const state = JSON.parse(await fs.readFile(path.join(root, "state.json"), "utf8")); state.current_goal = "</script><script>bad()</script>"; await fs.writeFile(path.join(root, "state.json"), JSON.stringify(state));
   await buildDashboard({ dataRoot: root }); const html = await fs.readFile(path.join(root, "dashboard.html"), "utf8");
   assert.doesNotMatch(html, /<\/script><script>bad\(\)<\/script>/); assert.match(html, /\\u003c\/script\\u003e/);
+});
+test("review page data includes a user-authored closure artifact", async (t) => {
+  const root = await fixture(t); await journalClosureRecord({ stage: "D1", highlights: ["Keep the full product before taking MULH."], revisit: ["DIV edge cases."], redo: null }, { dataRoot: root });
+  const data = await dashboardData({ dataRoot: root }); assert.equal(data.closures.length, 1); assert.match(data.closures[0].source, /Keep the full product/);
+  await buildDashboard({ dataRoot: root }); const html = await fs.readFile(path.join(root, "dashboard.html"), "utf8"); assert.match(html, /Keep the full product/);
 });
 test("builder rejects a symlink dashboard target", async (t) => {
   if (process.platform === "win32") { t.skip("Windows test environment cannot create symlinks"); return; }
