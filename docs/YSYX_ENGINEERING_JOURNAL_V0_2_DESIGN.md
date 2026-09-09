@@ -2,7 +2,7 @@
 
 ## Review & Visualization
 
-状态：设计；不在本轮实现 Dashboard 或 Web serving。
+状态：V0.2A 本地实现完成并经 synthetic fixture 验证；尚未部署 Pi、未读取真实 D1 数据、未启用 Web serving。
 
 V0.1 的目标是“低负担记录真实学习过程”；V0.2 的目标是“快速理解和复盘自己的长期学习轨迹”。它不替代学习、不评价学习表现，也不自动补全课程内容。
 
