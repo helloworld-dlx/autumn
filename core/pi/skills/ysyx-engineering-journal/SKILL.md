@@ -58,6 +58,16 @@ node /home/xyzlh/.openclaw/workspace/tools/ysyx_journal.mjs journal_context "{}"
 
 只有在 `journal_record` 成功返回后，才能说“已记录”。绝不能把草稿、推测或模型回复当成已写入日志。
 
+## Conditional manual Git checkpoint reminder
+
+三问和主流程冻结：**不要**增加“今天要不要 commit？”或任何第四个固定问题。
+
+仅在 `journal_record` 成功、日志与 state 已落盘后，检查 helper 返回的 `checkpoint.recommended`。信号只能来自用户本轮明确事实：substage/stage 完成、已明确验证通过的一组功能或独立模块、重要 Bug 修复且 regression 通过、准备重构/大改/进入下一 PA 或 substage。普通阅读、时长很长、仅编译成功、测试仍失败、根因未确认、“应该好了”或“差不多”都不得设置 checkpoint signal。
+
+若 recommended 为 true，才在“已记录”后追加自然提示：这是一个适合 manual Git checkpoint 的节点，并展示返回的建议 message。D1 closure 应明确说明“D1 已完成”，而不是猜测测试名称。Git provider 仍为 unavailable：不得读 VM status、自动 commit、生成 hash 或称 Git 已验证；只说明需要在 Linux VM 手动执行：`git add .`，再 `git commit --allow-empty -m "<suggested message>"`。
+
+helper 会以 date/substage/reason/message 记录已提示的 closure，避免同一节点在后续学习日重复提醒。用户之后明确说“我已经提交了 / 刚才 commit 了”时，可调用 `journal_checkpoint_confirmed`，只保存用户确认的 date、substage、message；没有真实 helper 时不要求、不猜测 hash，也不称已验证。
+
 ## Other intents
 
 - “做到哪里了” → `journal_progress`

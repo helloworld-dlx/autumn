@@ -42,6 +42,44 @@ test("D and C reviews keep their own logs", async (t) => { const { root, mod } =
 test("unverified mandatory mapping has no percentage and D6 remains optional", async (t) => { const { root, mod } = await fixture(t); const progress = await mod.journalProgress({ dataRoot: root }); assert.equal(progress.mandatory.counts, null); assert.equal(progress.milestones.D6.optional, true); });
 test("initialize creates the approved D1 state without inventing a learning day", async (t) => { const { root, mod } = await fixture(t); const state = await mod.journalInitialize({}, { dataRoot: root }); assert.equal(state.current_stage, "D"); assert.equal(state.current_substage, "D1"); assert.equal(state.current_task, "支持RV32IM的NEMU"); assert.equal(state.total_learning_days, 0); assert.equal(state.total_learning_minutes, 0); await assert.rejects(mod.journalInitialize({}, { dataRoot: root }), /already initialized/); });
 test("checkpoint recommendation is not execution and compiler success alone is not a signal", async (t) => { const { root, mod } = await fixture(t); const no = await mod.journalRecord(ordinary(undefined, { completed: ["成功编译。"] }), { dataRoot: root }); assert.equal(no.checkpoint.recommended, false); assert.equal(no.checkpoint.executed, false); });
+test("ordinary reading day does not suggest a checkpoint", async (t) => {
+  const { root, mod } = await fixture(t); const result = await mod.journalRecord(ordinary(undefined, { completed: ["阅读 NEMU 执行流程。"], checkpoint_signals: {} }), { dataRoot: root });
+  assert.equal(result.checkpoint.recommended, false);
+});
+test("long learning day with failed tests does not suggest a checkpoint", async (t) => {
+  const { root, mod } = await fixture(t); const result = await mod.journalRecord(ordinary(undefined, { minutes: 180, completed: ["MUL 测试仍失败。"], checkpoint_signals: {} }), { dataRoot: root });
+  assert.equal(result.checkpoint.recommended, false);
+});
+test("explicit MUL/MULH cpu-tests pass suggests a manual checkpoint", async (t) => {
+  const { root, mod } = await fixture(t); const result = await mod.journalRecord(ordinary(undefined, { completed: ["MUL/MULH 都通过 cpu-tests。"], checkpoint_signals: { tests_passed: true } }), { dataRoot: root });
+  assert.equal(result.checkpoint.recommended, true); assert.match(result.checkpoint.message, /MUL\/MULH/); assert.equal(result.checkpoint.provider, "unavailable");
+});
+test("unconfirmed 'probably fixed' does not suggest a checkpoint", async (t) => {
+  const { root, mod } = await fixture(t); const result = await mod.journalRecord(ordinary(undefined, { completed: ["DIV 好像好了。"], checkpoint_signals: {} }), { dataRoot: root });
+  assert.equal(result.checkpoint.recommended, false);
+});
+test("confirmed bug fix with regression PASS suggests a checkpoint", async (t) => {
+  const { root, mod } = await fixture(t); const result = await mod.journalRecord(ordinary(undefined, { completed: ["修复除法符号扩展，regression PASS。"], checkpoint_signals: { bug_fixed_regression: true } }), { dataRoot: root });
+  assert.equal(result.checkpoint.recommended, true);
+});
+test("D1 closure is a strong checkpoint signal and is not repeated", async (t) => {
+  const { root, mod } = await fixture(t); const first = await mod.journalRecord(ordinary("2026-09-02", { completed: ["D1 完成，准备 D2。"], milestone_status: "done", checkpoint_signals: { substage_completed: true, before_new_stage: true } }), { dataRoot: root });
+  assert.equal(first.checkpoint.recommended, true); assert.equal(first.checkpoint.message, "checkpoint: complete D1 RV32IM NEMU");
+  const second = await mod.journalRecord(ordinary("2026-09-03", { completed: ["整理 D1 收尾。"], milestone_status: "done", checkpoint_signals: { substage_completed: true } }), { dataRoot: root });
+  assert.equal(second.checkpoint.recommended, false); assert.equal(second.checkpoint.suppressed, "already_suggested");
+  const state = (await mod.journalContext({ dataRoot: root })).state; assert.equal(state.checkpoint_suggestions.length, 1);
+});
+test("user-confirmed manual checkpoint records no fake hash", async (t) => {
+  const { root, mod } = await fixture(t); await mod.journalRecord(ordinary(), { dataRoot: root });
+  const result = await mod.journalCheckpointConfirmed({ date: "2026-09-02", substage: "D1", message: "checkpoint: complete D1 RV32IM NEMU" }, { dataRoot: root });
+  assert.deepEqual(result.manual_checkpoint, { date: "2026-09-02", substage: "D1", message: "checkpoint: complete D1 RV32IM NEMU", confirmed_by_user: true });
+  assert.equal(Object.hasOwn(result.manual_checkpoint, "hash"), false);
+});
+test("unavailable Git provider does not prevent checkpoint suggestion or journal save", async (t) => {
+  const { root, mod } = await fixture(t); const result = await mod.journalRecord(ordinary(undefined, { checkpoint_signals: { module_finished_verified: true } }), { dataRoot: root });
+  assert.equal(result.checkpoint.recommended, true); assert.equal(result.checkpoint.provider, "unavailable");
+  await fs.access(path.join(root, "logs", "2026-09-02.md")); await fs.access(path.join(root, "state.json"));
+});
 test("skill advertises narrow YSYX journal activation and protects generic notes", async () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const skill = await fs.readFile(path.resolve(here, "..", "skills", "ysyx-engineering-journal", "SKILL.md"), "utf8");

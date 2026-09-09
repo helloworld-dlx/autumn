@@ -38,11 +38,14 @@ function emptyState() {
     last_learning_date: null, total_learning_days: 0, total_learning_minutes: 0,
     milestones: Object.fromEntries(Object.entries(SUBSTAGES).map(([id, label]) => [id, { label, status: "not_started", optional: id === "D6" }])),
     official_mandatory_task_mapping: { source_status: "unverified", source_name: null, source_reference: null, imported_at: null, items: [] },
-    last_manual_git_checkpoint: null, unresolved_items: [], indexes: { tags: {}, concepts: {}, bugs: {} }
+    last_manual_git_checkpoint: null, checkpoint_suggestions: [], unresolved_items: [], indexes: { tags: {}, concepts: {}, bugs: {} }
   };
 }
 export function parseState(source) {
   let state; try { state = JSON.parse(source); } catch { fail("state is invalid JSON"); }
+  // V0.1 runtime state predates reminder history.  Reading it remains safe; the
+  // field is persisted on the next successful journal mutation.
+  if (!Object.hasOwn(state, "checkpoint_suggestions")) state.checkpoint_suggestions = [];
   only(state, new Set(Object.keys(emptyState())), "state");
   if (state.schema_version !== 1 || state.course_version !== COURSE_VERSION || state.timezone !== "Asia/Shanghai") fail("state version is invalid");
   for (const field of ["current_stage", "current_substage", "current_task", "current_goal", "last_learning_date"]) if (state[field] !== null && typeof state[field] !== "string") fail(`state ${field} is invalid`);
@@ -58,7 +61,12 @@ export function parseState(source) {
   only(state.official_mandatory_task_mapping, new Set(["source_status", "source_name", "source_reference", "imported_at", "items"]), "mandatory mapping");
   if (state.official_mandatory_task_mapping.source_status !== "unverified" && state.official_mandatory_task_mapping.source_status !== "verified") fail("mandatory source status is invalid");
   if (!Array.isArray(state.official_mandatory_task_mapping.items)) fail("mandatory items are invalid");
-  if (!Array.isArray(state.unresolved_items) || !state.indexes || typeof state.indexes !== "object") fail("state collections are invalid");
+  if (!Array.isArray(state.checkpoint_suggestions) || !Array.isArray(state.unresolved_items) || !state.indexes || typeof state.indexes !== "object") fail("state collections are invalid");
+  for (const suggestion of state.checkpoint_suggestions) {
+    only(suggestion, new Set(["date", "substage", "reason", "suggested_message"]), "checkpoint suggestion");
+    date(suggestion.date); if (!STAGES.has(suggestion.substage)) fail("checkpoint suggestion stage is invalid");
+    plain(suggestion.reason, "checkpoint suggestion reason", { max: 80 }); plain(suggestion.suggested_message, "checkpoint suggestion message", { max: 180 });
+  }
   return state;
 }
 export const serializeState = (state) => `${JSON.stringify(parseState(JSON.stringify(state)), null, 2)}\n`;
@@ -78,7 +86,7 @@ function normalizeRecord(raw) {
   if (!Number.isInteger(raw.minutes) || raw.minutes < 1 || raw.minutes > 1440) fail("minutes is invalid");
   const milestoneStatus = raw.milestone_status ?? "in_progress"; if (!STATES.has(milestoneStatus)) fail("milestone status is invalid");
   const signals = raw.checkpoint_signals ?? {};
-  only(signals, new Set(["tests_passed", "module_finished_verified", "bug_fixed_regression", "before_major_refactor", "before_new_stage", "stable_end_of_day"]), "checkpoint signals");
+  only(signals, new Set(["substage_completed", "tests_passed", "module_finished_verified", "bug_fixed_regression", "before_major_refactor", "before_new_stage", "stage_closure"]), "checkpoint signals");
   for (const value of Object.values(signals)) if (typeof value !== "boolean") fail("checkpoint signal is invalid");
   return {
     date: date(raw.date), stage, minutes: raw.minutes,
@@ -128,7 +136,21 @@ async function readState(root) { const target = paths(root).state; await regular
 function derived(logs) { return { total_learning_days: logs.length, total_learning_minutes: logs.reduce((total, item) => total + item.minutes, 0), last_learning_date: logs.at(-1)?.date ?? null }; }
 function consistency(state, logs) { const value = derived(logs); return state.total_learning_days === value.total_learning_days && state.total_learning_minutes === value.total_learning_minutes && state.last_learning_date === value.last_learning_date ? "consistent" : "inconsistent"; }
 function addIndex(index, values, day) { for (const value of values) { const key = value.toLowerCase(); index[key] ??= []; if (!index[key].includes(day)) index[key].push(day); } }
-export function recommendCheckpoint(record) { const reasons = Object.entries(record.checkpoint_signals).filter(([, value]) => value).map(([key]) => key); if (!reasons.length) return { recommended: false, executed: false, provider: "unavailable", reasons: [], message: null }; const summary = record.completed[0]?.replace(/[\r\n]/g, " ").slice(0, 72) || "stable verified checkpoint"; return { recommended: true, executed: false, provider: "unavailable", reasons, message: `checkpoint: ${record.stage} ${summary}`, modes: ["mark_current_state", "commit_changes"] }; }
+function checkpointMessage(record, reasons) {
+  if (reasons.includes("substage_completed") || reasons.includes("stage_closure")) {
+    if (record.stage === "D1") return "checkpoint: complete D1 RV32IM NEMU";
+    return `checkpoint: complete ${record.stage}`;
+  }
+  const summary = record.completed[0]?.replace(/[\r\n]/g, " ").slice(0, 120);
+  return summary ? `checkpoint: ${record.stage} ${summary}` : `checkpoint: verified ${record.stage} checkpoint`;
+}
+export function recommendCheckpoint(record, previous = []) {
+  const reasons = Object.entries(record.checkpoint_signals).filter(([, value]) => value).map(([key]) => key);
+  if (!reasons.length) return { recommended: false, executed: false, provider: "unavailable", reasons: [], message: null };
+  const reason = reasons.includes("substage_completed") ? "substage_completed" : reasons.includes("stage_closure") ? "stage_closure" : reasons[0];
+  if (previous.some((item) => item.substage === record.stage && item.reason === reason)) return { recommended: false, executed: false, provider: "unavailable", reasons, message: null, suppressed: "already_suggested" };
+  return { recommended: true, executed: false, provider: "unavailable", reasons, message: checkpointMessage(record, reasons), modes: ["manual"] };
+}
 export async function journalContext({ dataRoot = DEFAULT_DATA_ROOT } = {}) { const state = await readState(dataRoot); const logs = await entries(dataRoot); return { course_version: COURSE_VERSION, state, default_goal: logs.at(-1)?.next_step ?? null, git_provider: { status: "unavailable" }, state_consistency: consistency(state, logs) }; }
 export async function journalInitialize(input = {}, { dataRoot = DEFAULT_DATA_ROOT } = {}) {
   only(input, new Set(), "initialize");
@@ -144,13 +166,34 @@ export async function journalRecord(input, { dataRoot = DEFAULT_DATA_ROOT } = {}
   const record = normalizeRecord(input); return await locked(dataRoot, async () => {
     const layout = paths(dataRoot); await fs.mkdir(layout.logs, { recursive: true, mode: 0o700 }); const target = path.join(layout.logs, `${record.date}.md`); await regular(target); if (await fs.lstat(target).then(() => true).catch((error) => error.code === "ENOENT" ? false : Promise.reject(error))) fail("record already exists for date");
     const state = await readState(dataRoot); const logs = await entries(dataRoot); if (consistency(state, logs) !== "consistent") fail("state/log inconsistency detected");
-    const checkpoint = recommendCheckpoint(record); await atomicWrite(target, renderLog(record, { checkpoint }));
+    await atomicWrite(target, renderLog(record));
     state.current_stage = stageGroup(record.stage); state.current_substage = record.stage; state.current_task = record.current_task; state.current_goal = record.goal; state.milestones[record.stage].status = record.milestone_status;
     const latest = [...logs, parseLog(await fs.readFile(target, "utf8"))]; Object.assign(state, derived(latest));
     state.unresolved_items = state.unresolved_items.filter((item) => !record.resolved_unresolved.includes(item.summary)); for (const summary of record.unresolved) if (!state.unresolved_items.some((item) => item.summary === summary)) state.unresolved_items.push({ summary, stage: record.stage, first_seen_date: record.date, status: "open" });
     addIndex(state.indexes.tags, record.tags, record.date); addIndex(state.indexes.concepts, record.concepts, record.date); addIndex(state.indexes.bugs, record.bugs.map((bug) => bug.title), record.date);
-    await atomicWrite(layout.state, serializeState(state)); return { record: parseLog(await fs.readFile(target, "utf8")), checkpoint, state };
+    await atomicWrite(layout.state, serializeState(state));
+    // Eligibility is intentionally evaluated only after the canonical log and
+    // state have been persisted.  A reminder failure must not turn a saved
+    // Journal entry into a failed write.
+    let checkpoint;
+    try {
+      checkpoint = recommendCheckpoint(record, state.checkpoint_suggestions);
+      if (checkpoint.recommended) {
+        const reason = checkpoint.reasons.includes("substage_completed") ? "substage_completed" : checkpoint.reasons.includes("stage_closure") ? "stage_closure" : checkpoint.reasons[0];
+        state.checkpoint_suggestions.push({ date: record.date, substage: record.stage, reason, suggested_message: checkpoint.message });
+        await atomicWrite(layout.state, serializeState(state));
+      }
+    } catch {
+      checkpoint = { recommended: false, executed: false, provider: "unavailable", reasons: [], message: null, evaluation_status: "unavailable" };
+    }
+    return { record: parseLog(await fs.readFile(target, "utf8")), checkpoint, state };
   });
+}
+export async function journalCheckpointConfirmed(input, { dataRoot = DEFAULT_DATA_ROOT } = {}) {
+  only(input, new Set(["date", "substage", "message"]), "checkpoint confirmation");
+  const confirmed = { date: date(input.date), substage: plain(input.substage, "checkpoint substage", { max: 3 }), message: plain(input.message, "checkpoint message", { max: 180 }), confirmed_by_user: true };
+  if (!STAGES.has(confirmed.substage) || !confirmed.message.startsWith("checkpoint: ")) fail("checkpoint confirmation is invalid");
+  return await locked(dataRoot, async () => { const state = await readState(dataRoot); state.last_manual_git_checkpoint = confirmed; await atomicWrite(paths(dataRoot).state, serializeState(state)); return { manual_checkpoint: confirmed }; });
 }
 function windowEntries(logs, end, days) { date(end); const start = new Date(`${end}T00:00:00Z`); start.setUTCDate(start.getUTCDate() - days + 1); const first = start.toISOString().slice(0, 10); return logs.filter((entry) => entry.date >= first && entry.date <= end); }
 function aggregate(items) { return { learning_days: items.length, total_minutes: items.reduce((n, item) => n + item.minutes, 0), stages: [...new Set(items.map((item) => item.stage))], confirmed_completed_facts: items.flatMap((item) => item.completed.map((text) => ({ date: item.date, text }))), confirmed_concepts: items.flatMap((item) => item.concepts.map((text) => ({ date: item.date, text }))), bugs: items.flatMap((item) => item.bugs.map((bug) => ({ date: item.date, ...bug }))), unresolved_items: items.flatMap((item) => item.unresolved.map((text) => ({ date: item.date, text }))), checkpoints: [] }; }
@@ -158,5 +201,5 @@ export async function journalProgress({ dataRoot = DEFAULT_DATA_ROOT } = {}) { c
 export async function journalRecent({ limit = 10, dataRoot = DEFAULT_DATA_ROOT } = {}) { if (!Number.isInteger(limit) || limit < 1 || limit > 50) fail("limit is invalid"); const logs = await entries(dataRoot); return logs.slice(-limit).reverse(); }
 export async function journalSummary({ end_date = new Date().toISOString().slice(0, 10), dataRoot = DEFAULT_DATA_ROOT } = {}) { return { window_days: 14, end_date: date(end_date), ...aggregate(windowEntries(await entries(dataRoot), end_date, 14)) }; }
 export async function journalReview({ stage, dataRoot = DEFAULT_DATA_ROOT } = {}) { if (!["D", "C"].includes(stage)) fail("review stage is invalid"); const logs = (await entries(dataRoot)).filter((entry) => stageGroup(entry.stage) === stage); const progress = await journalProgress({ dataRoot }); return { stage, timeline: logs.map((entry) => ({ date: entry.date, substage: entry.stage, minutes: entry.minutes, next_step: entry.next_step })), ...aggregate(logs), milestones: Object.fromEntries(Object.entries(progress.milestones).filter(([id]) => stageGroup(id) === stage)), verified_mandatory: progress.mandatory.source_status === "verified" ? progress.mandatory.counts : null }; }
-export async function main(argv = process.argv.slice(2)) { const [action, payload = "{}", ...extra] = argv; if (extra.length) fail("unexpected arguments"); let input; try { input = JSON.parse(payload); } catch { fail("payload must be JSON"); } if (!input || typeof input !== "object" || Array.isArray(input) || Object.hasOwn(input, "dataRoot")) fail("payload is invalid"); const allowed = { journal_initialize: [], journal_context: [], journal_record: null, journal_progress: [], journal_recent: ["limit"], journal_summary: ["end_date"], journal_review: ["stage"] }; if (!(action in allowed)) fail("unsupported action"); if (allowed[action] && Object.keys(input).some((key) => !allowed[action].includes(key))) fail("payload has unknown fields"); const calls = { journal_initialize: () => journalInitialize(input), journal_context: () => journalContext(), journal_record: () => journalRecord(input), journal_progress: () => journalProgress(), journal_recent: () => journalRecent(input), journal_summary: () => journalSummary(input), journal_review: () => journalReview(input) }; process.stdout.write(`${JSON.stringify(await calls[action](), null, 2)}\n`); }
+export async function main(argv = process.argv.slice(2)) { const [action, payload = "{}", ...extra] = argv; if (extra.length) fail("unexpected arguments"); let input; try { input = JSON.parse(payload); } catch { fail("payload must be JSON"); } if (!input || typeof input !== "object" || Array.isArray(input) || Object.hasOwn(input, "dataRoot")) fail("payload is invalid"); const allowed = { journal_initialize: [], journal_context: [], journal_record: null, journal_checkpoint_confirmed: ["date", "substage", "message"], journal_progress: [], journal_recent: ["limit"], journal_summary: ["end_date"], journal_review: ["stage"] }; if (!(action in allowed)) fail("unsupported action"); if (allowed[action] && Object.keys(input).some((key) => !allowed[action].includes(key))) fail("payload has unknown fields"); const calls = { journal_initialize: () => journalInitialize(input), journal_context: () => journalContext(), journal_record: () => journalRecord(input), journal_checkpoint_confirmed: () => journalCheckpointConfirmed(input), journal_progress: () => journalProgress(), journal_recent: () => journalRecent(input), journal_summary: () => journalSummary(input), journal_review: () => journalReview(input) }; process.stdout.write(`${JSON.stringify(await calls[action](), null, 2)}\n`); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`Error: ${error.message}\n`); process.exitCode = 1; });
