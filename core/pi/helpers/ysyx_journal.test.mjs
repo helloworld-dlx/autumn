@@ -80,6 +80,13 @@ test("unavailable Git provider does not prevent checkpoint suggestion or journal
   assert.equal(result.checkpoint.recommended, true); assert.equal(result.checkpoint.provider, "unavailable");
   await fs.access(path.join(root, "logs", "2026-09-02.md")); await fs.access(path.join(root, "state.json"));
 });
+test("dashboard rebuild failure leaves a saved Journal entry and a later rebuild recovers", async (t) => {
+  const { root, mod } = await fixture(t);
+  const failed = await mod.journalRecord(ordinary(), { dataRoot: root, dashboardRebuild: async () => { throw new Error("derived build failed"); } });
+  assert.equal(failed.dashboard.status, "stale"); await fs.access(path.join(root, "logs", "2026-09-02.md")); await fs.access(path.join(root, "state.json"));
+  const recovered = await mod.journalRecord(ordinary("2026-09-03", { unresolved: [] }), { dataRoot: root });
+  assert.equal(recovered.dashboard.status, "updated"); await fs.access(path.join(root, "dashboard.html"));
+});
 test("completed substage closure preserves only the user's review answers and never overwrites", async (t) => {
   const { root, mod } = await fixture(t); await mod.journalRecord(ordinary(undefined, { milestone_status: "done", checkpoint_signals: { substage_completed: true } }), { dataRoot: root });
   const context = await mod.journalClosureContext({ stage: "D1", dataRoot: root }); assert.equal(context.learning_days, 1); assert.equal(context.logged_concepts[0].text, "先得到正确的 64 位乘积再取高位。");

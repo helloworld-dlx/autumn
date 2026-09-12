@@ -66,6 +66,8 @@ node /home/xyzlh/.openclaw/workspace/tools/ysyx_journal.mjs journal_context "{}"
 
 若 recommended 为 true，才在“已记录”后追加自然提示：这是一个适合 manual Git checkpoint 的节点，并展示返回的建议 message。D1 closure 应明确说明“D1 已完成”，而不是猜测测试名称。Git provider 仍为 unavailable：不得读 VM status、自动 commit、生成 hash 或称 Git 已验证；只说明需要在 Linux VM 手动执行：`git add .`，再 `git commit --allow-empty -m "<suggested message>"`。
 
+若 `journal_record` 已成功但返回的 `dashboard.status` 为 `stale`，必须明确说“日志已保存，Dashboard 暂未更新”，但不得把 Dashboard 失败说成 Journal 失败；后续一次成功 rebuild 会恢复 derived view。
+
 helper 会以 date/substage/reason/message 记录已提示的 closure，避免同一节点在后续学习日重复提醒。用户之后明确说“我已经提交了 / 刚才 commit 了”时，可调用 `journal_checkpoint_confirmed`，只保存用户确认的 date、substage、message；没有真实 helper 时不要求、不猜测 hash，也不称已验证。
 
 ## Optional substage closure review

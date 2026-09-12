@@ -129,6 +129,7 @@ export function parseLog(source) {
 }
 async function regular(target) { const stat = await fs.lstat(target).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error)); if (stat && (!stat.isFile() || stat.isSymbolicLink())) fail("journal target must be a regular file"); }
 async function atomicWrite(target, value) { await regular(target); const temp = `${target}.tmp-${process.pid}-${randomUUID()}`; try { await fs.writeFile(temp, value, { encoding: "utf8", mode: 0o600 }); await fs.rename(temp, target); } finally { await fs.unlink(temp).catch(() => {}); } }
+async function rebuildDashboard(dataRoot) { const { buildDashboard } = await import("./ysyx_dashboard.mjs"); return await buildDashboard({ dataRoot }); }
 async function locked(root, work) { await fs.mkdir(root, { recursive: true, mode: 0o700 }); const lock = path.join(root, ".journal.lock"); let handle; for (let n = 0; n < 80; n += 1) { try { handle = await fs.open(lock, "wx", 0o600); break; } catch (error) { if (error.code !== "EEXIST") throw error; await new Promise((resolve) => setTimeout(resolve, 25)); } } if (!handle) fail("journal is busy"); try { return await work(); } finally { await handle.close().catch(() => {}); await fs.unlink(lock).catch(() => {}); } }
 function paths(root) { return { root, state: path.join(root, "state.json"), logs: path.join(root, "logs"), reviews: path.join(root, "reviews") }; }
 async function entries(root) { const directory = path.join(root, "logs"); const names = await fs.readdir(directory).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error)); const result = []; for (const name of names.filter((name) => DATE.test(name.slice(0, 10)) && name.endsWith(".md")).sort()) result.push(parseLog(await fs.readFile(path.join(directory, name), "utf8"))); return result; }
@@ -162,7 +163,7 @@ export async function journalInitialize(input = {}, { dataRoot = DEFAULT_DATA_RO
     await atomicWrite(layout.state, serializeState(state)); return state;
   });
 }
-export async function journalRecord(input, { dataRoot = DEFAULT_DATA_ROOT } = {}) {
+export async function journalRecord(input, { dataRoot = DEFAULT_DATA_ROOT, dashboardRebuild = rebuildDashboard } = {}) {
   const record = normalizeRecord(input); return await locked(dataRoot, async () => {
     const layout = paths(dataRoot); await fs.mkdir(layout.logs, { recursive: true, mode: 0o700 }); const target = path.join(layout.logs, `${record.date}.md`); await regular(target); if (await fs.lstat(target).then(() => true).catch((error) => error.code === "ENOENT" ? false : Promise.reject(error))) fail("record already exists for date");
     const state = await readState(dataRoot); const logs = await entries(dataRoot); if (consistency(state, logs) !== "consistent") fail("state/log inconsistency detected");
@@ -186,7 +187,10 @@ export async function journalRecord(input, { dataRoot = DEFAULT_DATA_ROOT } = {}
     } catch {
       checkpoint = { recommended: false, executed: false, provider: "unavailable", reasons: [], message: null, evaluation_status: "unavailable" };
     }
-    return { record: parseLog(await fs.readFile(target, "utf8")), checkpoint, state };
+    let dashboard;
+    try { dashboard = { status: "updated", ...(await dashboardRebuild(dataRoot)) }; }
+    catch { dashboard = { status: "stale" }; }
+    return { record: parseLog(await fs.readFile(target, "utf8")), checkpoint, dashboard, state };
   });
 }
 export async function journalCheckpointConfirmed(input, { dataRoot = DEFAULT_DATA_ROOT } = {}) {
