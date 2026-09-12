@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { once } from "node:events";
 import test from "node:test";
-import { buildDashboard, dashboardData } from "./ysyx_dashboard.mjs";
+import { buildDashboard, dashboardData, dashboardServer } from "./ysyx_dashboard.mjs";
 import { journalClosureRecord, journalRecord } from "./ysyx_journal.mjs";
 
 async function fixture(t) {
@@ -26,6 +28,7 @@ test("builder writes one deterministic offline HTML with all four pages and no e
   const second = await buildDashboard({ dataRoot: root }); const again = await fs.readFile(output, "utf8");
   assert.equal(first.learning_days, 2); assert.deepEqual(second, first); assert.equal(html, again);
   for (const label of ["Overview", "Timeline", "Review", "Stats", "mulh", "MUL/MULH cpu-tests PASS"]) assert.match(html, new RegExp(label));
+  assert.doesNotThrow(() => new Function(html.match(/<script>([\s\S]*)<\/script>/)[1]));
   assert.doesNotMatch(html, /https?:\/\//); assert.doesNotMatch(html, /fetch\(/);
 });
 test("dashboard embeds journal text safely without creating executable markup", async (t) => {
@@ -43,4 +46,15 @@ test("builder rejects a symlink dashboard target", async (t) => {
   if (process.platform === "win32") { t.skip("Windows test environment cannot create symlinks"); return; }
   const root = await fixture(t); const target = path.join(root, "dashboard.html"); await fs.symlink(path.join(root, "state.json"), target);
   await assert.rejects(buildDashboard({ dataRoot: root }), /regular file/);
+});
+test("dashboard server exposes only the generated HTML", async (t) => {
+  const root = await fixture(t); await buildDashboard({ dataRoot: root });
+  const server = dashboardServer({ dataRoot: root }); t.after(() => server.close());
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const port = server.address().port;
+  const request = (pathname, method = "GET") => new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, path: pathname, method }, (res) => { let body = ""; res.setEncoding("utf8"); res.on("data", (part) => body += part); res.on("end", () => resolve({ status: res.statusCode, body, headers: res.headers })); }); req.on("error", reject); req.end();
+  });
+  const page = await request("/"); assert.equal(page.status, 200); assert.match(page.body, /YSYX Engineering Journal/); assert.match(page.headers["content-security-policy"], /default-src 'none'/);
+  assert.equal((await request("/logs/2026-09-01.md")).status, 404); assert.equal((await request("/state.json")).status, 404); assert.equal((await request("/", "POST")).status, 405);
 });

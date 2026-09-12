@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_DATA_ROOT, journalClosures, parseLog, parseState, SUBSTAGES } from "./ysyx_journal.mjs";
@@ -67,7 +68,7 @@ function logView(log){return '<details><summary>'+e(log.date+' · '+log.stage+' 
 function renderTimeline(){q("#timeline").innerHTML='<h2>学习时间线</h2><div class="filters"><select id="stage"><option value="">全部子阶段</option>'+Object.keys(data.milestones).map(x=>'<option>'+x+'</option>').join("")+'</select><select id="type"><option value="all">全部类型</option><option value="concept">概念</option><option value="bug">Bug</option><option value="unresolved">未解决项</option></select><input id="from" type="date" aria-label="开始日期"><input id="to" type="date" aria-label="结束日期"><input id="search" placeholder="关键词，例如 mulh"></div><div id="log-list"></div>';["stage","type","from","to","search"].forEach(id=>q("#"+id).addEventListener("input",update));update()}
 function update(){q("#log-list").innerHTML=data.timeline.filter(matches).slice().reverse().map(logView).join("")||'<p class="muted">没有匹配的真实 Journal 记录。</p>'}
 function renderReview(){const options=Object.keys(data.milestones).map(x=>'<option>'+x+'</option>').join("");q("#review").innerHTML='<h2>阶段复盘</h2><div class="filters"><select id="review-stage">'+options+'</select></div><div id="review-content"></div>';q("#review-stage").addEventListener("input",review);review()}
-function closureView(source){return source.split("\n").filter(Boolean).map(line=>line.startsWith("# ")?'<div class="value">'+e(line.slice(2))+'</div>':line.startsWith("## ")?'<h3>'+e(line.slice(3))+'</h3>':line.startsWith("- ")?'<div class="item">'+e(line.slice(2))+'</div>':'<p class="muted">'+e(line)+'</p>').join("")}
+function closureView(source){return source.split("\\n").filter(Boolean).map(line=>line.startsWith("# ")?'<div class="value">'+e(line.slice(2))+'</div>':line.startsWith("## ")?'<h3>'+e(line.slice(3))+'</h3>':line.startsWith("- ")?'<div class="item">'+e(line.slice(2))+'</div>':'<p class="muted">'+e(line)+'</p>').join("")}
 function review(){const stage=q("#review-stage").value,logs=data.timeline.filter(x=>x.stage===stage),concepts=logs.flatMap(x=>x.concepts.map(v=>({date:x.date,v}))),bugs=logs.flatMap(x=>x.bugs.map(v=>({date:x.date,v}))),unresolved=logs.flatMap(x=>x.unresolved.map(v=>({date:x.date,v}))),suggestions=data.checkpoint_suggestions.filter(x=>x.substage===stage),closure=data.closures.find(x=>x.stage===stage);const list=(items,fn)=>(items.length?items.map(fn).join(""):'<p class="muted">没有记录。</p>');q("#review-content").innerHTML='<h3>阶段复盘</h3>'+(closure?'<div class="panel">'+closureView(closure.source)+'</div>':'<p class="muted">尚未完成阶段复盘。</p>')+'<h3>阶段时间线</h3>'+list(logs,x=>'<div class="item">'+e(x.date+' · '+mins(x.minutes)+' · '+(x.completed.join("；")||"（无）"))+'</div>')+'<h3>概念</h3>'+list(concepts,x=>'<div class="item">'+e(x.date+' · '+x.v)+'</div>')+'<h3>Bug 案例集</h3>'+list(bugs,x=>'<div class="item"><strong>'+e(x.date+' · '+x.v.title)+'</strong><pre>'+e(x.v.text)+'</pre></div>')+'<h3>未解决项</h3>'+list(unresolved,x=>'<div class="item">'+e(x.date+' · '+x.v)+'</div>')+'<h3>验证 / 测试事实</h3>'+list(logs.flatMap(x=>x.completed.map(v=>({date:x.date,v}))),x=>'<div class="item">'+e(x.date+' · '+x.v)+'</div>')+'<h3>手动 Checkpoint</h3>'+list(suggestions,x=>'<div class="item">'+e(x.date+' · 建议 · '+x.suggested_message)+'</div>')}
 function renderStats(){const rows=Object.entries(data.stats.by_substage).filter(([,v])=>v.days).map(([id,v])=>'<div class="card"><strong>'+id+'</strong><div class="muted">'+v.days+' 天 · '+mins(v.minutes)+'</div><div class="bar" style="width:'+Math.max(4,Math.round(v.minutes/Math.max(1,data.overview.total_minutes)*100))+'%"></div></div>').join("");const weeks=Object.entries(data.stats.weekly_minutes).sort().map(([w,m])=>'<div class="item">'+e(w+' · '+mins(m))+'</div>').join("");q("#stats").innerHTML='<h2>学习统计</h2><div class="grid">'+card("记录的概念",data.stats.concept_count)+card("Bug 案例",data.stats.bug_count)+card("未解决项",data.stats.unresolved_count)+card("用户确认 checkpoint",data.stats.manual_checkpoint_count)+'</div><h3>各子阶段学习时长</h3><div class="grid">'+(rows||'<p class="muted">没有记录。</p>')+'</div><h3>每周学习时长</h3>'+(weeks||'<p class="muted">没有记录。</p>')}
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll("nav button,.page").forEach(x=>x.classList.remove("active"));b.classList.add("active");q("#"+b.dataset.page).classList.add("active")}));renderOverview();renderTimeline();renderReview();renderStats();</script></body></html>\n`;
@@ -79,10 +80,50 @@ export async function buildDashboard({ dataRoot = DEFAULT_DATA_ROOT, outputPath 
   return { output_path: outputPath, learning_days: data.generated_from.learning_days, total_minutes: data.overview.total_minutes };
 }
 
+export function dashboardServer({ dataRoot = DEFAULT_DATA_ROOT } = {}) {
+  const dashboardPath = path.join(dataRoot, "dashboard.html");
+  return http.createServer(async (request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      response.writeHead(405, { Allow: "GET, HEAD" }); response.end(); return;
+    }
+    if (pathname !== "/" && pathname !== "/index.html" && pathname !== "/dashboard.html") {
+      response.writeHead(404); response.end(); return;
+    }
+    try {
+      await regular(dashboardPath);
+      const body = await fs.readFile(dashboardPath);
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": body.length,
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.end(request.method === "HEAD" ? undefined : body);
+    } catch (error) {
+      response.writeHead(error.code === "ENOENT" ? 404 : 500); response.end();
+    }
+  });
+}
+
+export async function serveDashboard({ host, port, dataRoot = DEFAULT_DATA_ROOT } = {}) {
+  if (typeof host !== "string" || !host) fail("host is required");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) fail("port is invalid");
+  const server = dashboardServer({ dataRoot });
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, host, resolve); });
+  return server;
+}
+
 export async function main(argv = process.argv.slice(2)) {
-  const [action, payload = "{}", ...extra] = argv; if (extra.length || action !== "build") fail("unsupported action");
+  const [action, payload = "{}", ...extra] = argv; if (extra.length || !["build", "serve"].includes(action)) fail("unsupported action");
   let input; try { input = JSON.parse(payload); } catch { fail("payload must be JSON"); }
-  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length) fail("payload is invalid");
-  process.stdout.write(`${JSON.stringify(await buildDashboard(), null, 2)}\n`);
+  if (!input || typeof input !== "object" || Array.isArray(input)) fail("payload is invalid");
+  if (action === "build") {
+    if (Object.keys(input).length) fail("payload is invalid");
+    process.stdout.write(`${JSON.stringify(await buildDashboard(), null, 2)}\n`); return;
+  }
+  if (Object.keys(input).length) fail("payload is invalid");
+  await serveDashboard({ host: process.env.YSYX_DASHBOARD_HOST, port: Number(process.env.YSYX_DASHBOARD_PORT) });
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`Error: ${error.message}\n`); process.exitCode = 1; });
