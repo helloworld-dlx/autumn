@@ -29,6 +29,18 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertIn("process_turn_stream(audio, name, mime, requested, emit_event", route)
         self.assertLess(route.index("def emit_event(payload: dict[str, object])"), route.index("process_turn_stream(audio, name, mime, requested, emit_event"))
 
+    def test_chat_stream_uses_chat_source_and_emits_deltas(self):
+        events = []
+        def stream(message, key, on_delta, source="voice", attachments=None, on_trace=None):
+            self.assertEqual((message, key, source, attachments), ("markdown", "companion:main", "chat", []))
+            on_delta("**bold", "**bold")
+            return "**bold**"
+        with tempfile.TemporaryDirectory() as directory:
+            result = bridge.process_chat_stream("markdown", "main", events.append, autumn_stream=stream,
+                                                history=lambda _key: [], transfer_root=Path(directory))
+        self.assertEqual(result["reply"], "**bold**")
+        self.assertEqual([event["type"] for event in events], ["text", "final"])
+
     def test_transcription_retries_one_transient_503(self):
         class Response:
             def __enter__(self): return self

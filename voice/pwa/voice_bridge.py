@@ -454,9 +454,11 @@ def autumn_turn(transcript: str, voice_key: str, gateway: GatewayTurnClient = GA
 
 
 def autumn_turn_stream(transcript: str, voice_key: str, on_delta, gateway: GatewayTurnClient = GATEWAY,
-                       on_trace=None) -> str:
+                       on_trace=None, source: str = "voice",
+                       attachments: list[dict[str, object]] | None = None) -> str:
     try:
-        return gateway.turn_stream(transcript, voice_key, on_delta, "voice", on_trace)
+        return gateway.turn_stream(transcript, voice_key, on_delta, source=source,
+                                   attachments=attachments, on_trace=on_trace)
     except BridgeError:
         raise
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
