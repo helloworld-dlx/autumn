@@ -338,20 +338,24 @@ class GatewayTurnClient:
             raise RuntimeError(str(result.get("error") or "Gateway returned no reply"))
         return result["text"].strip()
 
-    def turn_stream(self, message: str, voice_key: str, on_delta, source: str = "voice", on_trace=None) -> str:
+    def turn_stream(self, message: str, voice_key: str, on_delta, source: str = "voice",
+                    attachments: list[dict[str, object]] | None = None, on_trace=None) -> str:
         request_id = uuid.uuid4().hex
         callback_error: Exception | None = None
         with self.lock:
             process = self._start()
             if process.stdin is None or process.stdout is None:
                 raise RuntimeError("Gateway helper pipes unavailable")
-            process.stdin.write(json.dumps({
+            request = {
                 "message": message,
                 "sessionKey": voice_key,
                 "source": source,
                 "stream": True,
                 "requestId": request_id,
-            }, ensure_ascii=False) + "\n")
+            }
+            if source == "chat" and attachments:
+                request["attachments"] = attachments
+            process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
             process.stdin.flush()
             while True:
                 line = process.stdout.readline()
@@ -835,6 +839,28 @@ def ensure_conversation_title(conversation_key_value: str, first_user_text: str,
     return True
 
 
+def update_conversation_title(conversation_id: str, title: object,
+                              path: Path = CONVERSATION_TITLES_PATH) -> dict[str, object]:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", conversation_id or "")[:80]
+    if not safe or safe != conversation_id:
+        raise BridgeError("CONVERSATION_INVALID", "Conversation id is invalid", 400)
+    if not isinstance(title, str):
+        raise BridgeError("TITLE_INVALID", "Conversation title is invalid", 400)
+    clean = title.strip()
+    if not clean or len(clean) > MAX_CONVERSATION_TITLE_CHARS or any(ord(char) < 32 or ord(char) == 127 for char in clean):
+        raise BridgeError("TITLE_INVALID", "Conversation title is invalid", 400)
+    key = conversation_key(safe)
+    with CONVERSATION_TITLES_LOCK:
+        titles = _read_conversation_titles(path)
+        titles[key] = {"title": clean, "storedAt": int(time.time())}
+        if len(titles) > MAX_CONVERSATION_TITLE_RECORDS:
+            ordered = sorted(titles.items(), key=lambda item: item[1].get("storedAt", 0))
+            for old_key, _item in ordered[:len(titles) - MAX_CONVERSATION_TITLE_RECORDS]:
+                titles.pop(old_key, None)
+        _write_conversation_titles(titles, path)
+    return {"ok": True, "id": safe, "conversationKey": key, "title": clean}
+
+
 def load_conversation_title(conversation_id: str, path: Path = CONVERSATION_TITLES_PATH) -> str:
     key = conversation_key(conversation_id)
     with CONVERSATION_TITLES_LOCK:
@@ -1303,6 +1329,70 @@ def process_chat(message: object, requested_conversation: str | None, attachment
         result["attachmentHistoryStored"] = metadata_stored
     return result
 
+
+def process_chat_stream(message: object, requested_conversation: str | None, emit,
+                        attachments: list[dict[str, object]] | None = None,
+                        autumn_stream=autumn_turn_stream, history=GATEWAY.history,
+                        metadata_path: Path = ATTACHMENT_META_PATH,
+                        title_path: Path = CONVERSATION_TITLES_PATH, new_conversation: bool = False,
+                        transfer_root: Path = TRANSFER_ROOT) -> dict[str, object]:
+    if not isinstance(message, str):
+        raise BridgeError("MESSAGE_REQUIRED", "Message must be text", 400)
+    clean = message.strip()
+    safe_attachments = attachments or []
+    if not clean and not safe_attachments:
+        raise BridgeError("MESSAGE_REQUIRED", "Message or attachment is required", 400)
+    if len(clean.encode("utf-8")) > MAX_CHAT_BYTES:
+        raise BridgeError("MESSAGE_TOO_LARGE", "Message exceeds 16 KiB", 413)
+    key = conversation_key(requested_conversation)
+    gateway_message = clean or "请查看我附上的文件。"
+    before_transfers = _returned_transfer_ids(transfer_root)
+    tool_trace: list[dict[str, object]] = []
+    presence_query = is_presence_query(clean)
+    streamed = ""
+
+    def on_delta(delta: str, accumulated: str) -> None:
+        nonlocal streamed
+        streamed = accumulated or (streamed + delta)
+        # Presence has a separate fail-closed final answer contract. Do not show
+        # an unverified partial answer before its trace can be checked.
+        if streamed and not presence_query:
+            emit({"type": "text", "text": streamed})
+
+    if supports_on_trace(autumn_stream):
+        reply = autumn_stream(gateway_message, key, on_delta, source="chat", attachments=safe_attachments,
+                              on_trace=tool_trace.append)
+    else:
+        reply = autumn_stream(gateway_message, key, on_delta, source="chat", attachments=safe_attachments)
+    reply = fail_closed_presence_reply(clean, reply, tool_trace)
+    if presence_query and reply.strip():
+        emit({"type": "text", "text": reply})
+
+    reply_attachments = _new_returned_attachments(before_transfers, transfer_root)
+    title_source = clean or (f"附件 {safe_attachments[0].get('fileName')}" if safe_attachments else "附件")
+    if _should_create_first_turn_title(requested_conversation, new_conversation, title_path):
+        try:
+            ensure_conversation_title(key, title_source, title_path)
+        except (OSError, json.JSONDecodeError):
+            pass
+    if safe_attachments or reply_attachments:
+        try:
+            rows = history(key)
+            if safe_attachments:
+                message_id = _latest_user_message_id(rows, gateway_message)
+                if message_id:
+                    store_attachment_metadata(key, message_id, safe_attachments, metadata_path)
+            if reply_attachments:
+                assistant_id = _latest_assistant_message_id(rows)
+                if assistant_id:
+                    store_attachment_metadata(key, assistant_id, reply_attachments, metadata_path)
+        except (OSError, RuntimeError, json.JSONDecodeError):
+            pass
+    result = {"conversationKey": key, "reply": reply, "replyAttachments": _safe_attachment_metadata(reply_attachments),
+              "toolTrace": tool_trace, "uiHints": ui_hints_from_activity(tool_trace, reply_attachments)}
+    emit({"type": "final", **result})
+    return result
+
 def process_history(conversation_id: str | None, history=GATEWAY.history,
                     metadata_path: Path = ATTACHMENT_META_PATH) -> dict[str, object]:
     key = conversation_key(conversation_id)
@@ -1332,6 +1422,8 @@ def process_main_history(history=GATEWAY.history) -> dict[str, object]:
 def _session_title(session: dict[str, object], conversation_id: str, local_title: str = "") -> str:
     if conversation_id == MAIN_CONVERSATION_ID:
         return "Main"
+    if local_title.strip():
+        return local_title.strip()[:MAX_CONVERSATION_TITLE_CHARS]
     for field in ("label", "preview"):
         value = session.get(field)
         if isinstance(value, str) and value.strip():
@@ -1339,8 +1431,6 @@ def _session_title(session: dict[str, object], conversation_id: str, local_title
             if field == "label" and text in {"autumn-voice-bridge", "gateway-client"}:
                 continue
             return text[:42] + ("…" if len(text) > 42 else "")
-    if local_title.strip():
-        return local_title.strip()[:MAX_CONVERSATION_TITLE_CHARS + 1]
     return "新对话"
 
 
@@ -1925,6 +2015,36 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self.send_json(500, {"error": "BARGE_INTENT_FAILED", "message": "Interruption intent check failed"})
             return
+        if self.path == "/api/chat-stream":
+            emit = None
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_CHAT_REQUEST_BYTES:
+                    raise BridgeError("MESSAGE_TOO_LARGE", "Chat request is too large", 413)
+                if "application/json" not in self.headers.get("Content-Type", "").lower():
+                    raise BridgeError("INVALID_JSON", "JSON body required", 400)
+                message, requested, attachments, new_conversation = parse_chat(self.rfile.read(length))
+                def emit_event(payload: dict[str, object]) -> None:
+                    nonlocal emit
+                    if emit is None:
+                        emit = self.begin_ndjson()
+                    emit(payload)
+                process_chat_stream(message, requested, emit_event, attachments, new_conversation=new_conversation)
+            except BridgeError as exc:
+                if emit is None:
+                    self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+                else:
+                    try: emit({"type": "error", "error": exc.code, "message": exc.message})
+                    except OSError: pass
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception:
+                if emit is None:
+                    self.send_json(500, {"error": "INTERNAL_ERROR", "message": "Chat failed"})
+                else:
+                    try: emit({"type": "error", "error": "INTERNAL_ERROR", "message": "Chat failed"})
+                    except OSError: pass
+            return
         if self.path == "/api/chat":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -1960,6 +2080,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(exc.status, {"error": exc.code, "message": exc.message})
             except (OSError, json.JSONDecodeError):
                 self.send_json(500, {"error": "CONVERSATION_UI_STATE_FAILED", "message": "Conversation archive update failed"})
+            return
+        rename_match = re.fullmatch(r"/api/conversations/([A-Za-z0-9_-]{1,80})/title", request_path)
+        if rename_match:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 1024 or "application/json" not in self.headers.get("Content-Type", "").lower():
+                    raise BridgeError("INVALID_JSON", "Conversation title required", 400)
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict) or set(payload) != {"title"}:
+                    raise BridgeError("INVALID_JSON", "Conversation title required", 400)
+                self.send_json(200, update_conversation_title(rename_match.group(1), payload.get("title")))
+            except BridgeError as exc:
+                self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+            except (OSError, json.JSONDecodeError):
+                self.send_json(500, {"error": "CONVERSATION_TITLE_FAILED", "message": "Conversation title update failed"})
             return
         if self.path == "/api/turn-stream":
             emit = None

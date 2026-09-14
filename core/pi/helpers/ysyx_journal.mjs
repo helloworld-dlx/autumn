@@ -117,6 +117,7 @@ export function renderLog(record, { gitProvider = "unavailable", checkpoint = nu
   lines.push(section("遇到的问题", problems.join("\n").trimEnd()));
   lines.push(section("Git", [`- provider: ${gitProvider}`, "- manual checkpoint: （未查询）", `- checkpoint suggestion: ${checkpoint?.message ?? "（无）"}`].join("\n")));
   lines.push(section("下一步", record.next_step ?? ""));
+  lines.push(section("Journal 元数据", `<!-- journal-record-v1:${JSON.stringify(record)} -->`));
   return `${lines.join("\n").replaceAll("\r\n", "\n").replaceAll("\r", "\n")}\n`;
 }
 function sections(source) { const result = new Map(); const matches = [...source.matchAll(/^## ([^\n]+)\n\n([\s\S]*?)(?=^## |(?![\s\S]))/gm)]; for (const match of matches) result.set(match[1], match[2].trim()); return result; }
@@ -125,7 +126,10 @@ export function parseLog(source) {
   const heading = source.match(/^# (\d{4}-\d{2}-\d{2})｜([DC][1-6])｜(\d+)h(\d+)min\n/m); if (!heading || !STAGES.has(heading[2])) fail("log header is invalid");
   const blocks = sections(source); const problem = blocks.get("遇到的问题") ?? "";
   const bugs = [...problem.matchAll(/^### ([^\n]+)\n\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)].map((match) => ({ title: match[1], text: match[2].trim() }));
-  return { date: heading[1], stage: heading[2], minutes: Number(heading[3]) * 60 + Number(heading[4]), goal: blocks.get("目标") || null, completed: bullets(blocks.get("今天完成")), concepts: bullets(blocks.get("今天真正理解的东西")), unresolved: bullets(problem).filter((line) => !line.startsWith("provider:")), next_step: blocks.get("下一步") || null, bugs };
+  const basic = { date: heading[1], stage: heading[2], minutes: Number(heading[3]) * 60 + Number(heading[4]), goal: blocks.get("目标") || null, completed: bullets(blocks.get("今天完成")), concepts: bullets(blocks.get("今天真正理解的东西")), unresolved: bullets(problem).filter((line) => !line.startsWith("provider:")), next_step: blocks.get("下一步") || null, bugs };
+  const meta = blocks.get("Journal 元数据")?.match(/^<!-- journal-record-v1:(.*) -->$/s)?.[1];
+  if (!meta) return basic;
+  try { const record = normalizeRecord(JSON.parse(meta)); return record.date === basic.date ? { ...basic, record } : basic; } catch { return basic; }
 }
 async function regular(target) { const stat = await fs.lstat(target).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error)); if (stat && (!stat.isFile() || stat.isSymbolicLink())) fail("journal target must be a regular file"); }
 async function atomicWrite(target, value) { await regular(target); const temp = `${target}.tmp-${process.pid}-${randomUUID()}`; try { await fs.writeFile(temp, value, { encoding: "utf8", mode: 0o600 }); await fs.rename(temp, target); } finally { await fs.unlink(temp).catch(() => {}); } }
@@ -137,6 +141,18 @@ async function readState(root) { const target = paths(root).state; await regular
 function derived(logs) { return { total_learning_days: logs.length, total_learning_minutes: logs.reduce((total, item) => total + item.minutes, 0), last_learning_date: logs.at(-1)?.date ?? null }; }
 function consistency(state, logs) { const value = derived(logs); return state.total_learning_days === value.total_learning_days && state.total_learning_minutes === value.total_learning_minutes && state.last_learning_date === value.last_learning_date ? "consistent" : "inconsistent"; }
 function addIndex(index, values, day) { for (const value of values) { const key = value.toLowerCase(); index[key] ??= []; if (!index[key].includes(day)) index[key].push(day); } }
+function removeIndexDay(index, day) { for (const key of Object.keys(index)) { index[key] = index[key].filter((item) => item !== day); if (!index[key].length) delete index[key]; } }
+function indexValues(index, day) { return Object.entries(index).filter(([, days]) => Array.isArray(days) && days.includes(day)).map(([value]) => value); }
+function editableRecord(entry, state) {
+  if (entry.record) return entry.record;
+  if (entry.bugs.length) fail("legacy journal records with bug details cannot be amended safely");
+  return { date: entry.date, stage: entry.stage, minutes: entry.minutes, goal: entry.goal, current_task: null, completed: entry.completed, concepts: entry.concepts, unresolved: entry.unresolved, resolved_unresolved: [], next_step: entry.next_step, tags: indexValues(state.indexes.tags, entry.date), bugs: [], milestone_status: state.milestones[entry.stage]?.status === "not_started" ? "in_progress" : state.milestones[entry.stage]?.status || "in_progress", checkpoint_signals: {} };
+}
+function patchRecord(previous, patch) {
+  only(patch, new Set(["stage", "minutes", "goal", "current_task", "completed", "concepts", "unresolved", "resolved_unresolved", "next_step", "tags", "bugs", "milestone_status"]), "update patch");
+  if (!Object.keys(patch).length) fail("update patch must not be empty");
+  return normalizeRecord({ ...previous, ...patch, date: previous.date, checkpoint_signals: previous.checkpoint_signals });
+}
 function checkpointMessage(record, reasons) {
   if (reasons.includes("substage_completed") || reasons.includes("stage_closure")) {
     if (record.stage === "D1") return "checkpoint: complete D1 RV32IM NEMU";
@@ -193,6 +209,26 @@ export async function journalRecord(input, { dataRoot = DEFAULT_DATA_ROOT, dashb
     return { record: parseLog(await fs.readFile(target, "utf8")), checkpoint, dashboard, state };
   });
 }
+export async function journalUpdate(input, { dataRoot = DEFAULT_DATA_ROOT, dashboardRebuild = rebuildDashboard } = {}) {
+  only(input, new Set(["date", "patch"]), "update");
+  const targetDate = date(input.date); if (!input.patch || typeof input.patch !== "object" || Array.isArray(input.patch)) fail("update patch is invalid");
+  return await locked(dataRoot, async () => {
+    const layout = paths(dataRoot); const target = path.join(layout.logs, `${targetDate}.md`); await regular(target);
+    let existing; try { existing = parseLog(await fs.readFile(target, "utf8")); } catch (error) { if (error.code === "ENOENT") fail("record does not exist for date"); throw error; }
+    const state = await readState(dataRoot); const logs = await entries(dataRoot); if (consistency(state, logs) !== "consistent") fail("state/log inconsistency detected");
+    const previous = editableRecord(existing, state); const record = patchRecord(previous, input.patch);
+    await atomicWrite(target, renderLog(record));
+    const amended = await entries(dataRoot); Object.assign(state, derived(amended));
+    removeIndexDay(state.indexes.tags, targetDate); removeIndexDay(state.indexes.concepts, targetDate); removeIndexDay(state.indexes.bugs, targetDate);
+    addIndex(state.indexes.tags, record.tags, targetDate); addIndex(state.indexes.concepts, record.concepts, targetDate); addIndex(state.indexes.bugs, record.bugs.map((bug) => bug.title), targetDate);
+    state.unresolved_items = state.unresolved_items.filter((item) => item.first_seen_date !== targetDate && !record.resolved_unresolved.includes(item.summary));
+    for (const summary of record.unresolved) if (!state.unresolved_items.some((item) => item.summary === summary)) state.unresolved_items.push({ summary, stage: record.stage, first_seen_date: targetDate, status: "open" });
+    if (state.last_learning_date === targetDate) { state.current_stage = stageGroup(record.stage); state.current_substage = record.stage; if (record.current_task !== null) state.current_task = record.current_task; state.current_goal = record.goal; state.milestones[record.stage].status = record.milestone_status; }
+    await atomicWrite(layout.state, serializeState(state));
+    let dashboard; try { dashboard = { status: "updated", ...(await dashboardRebuild(dataRoot)) }; } catch { dashboard = { status: "stale" }; }
+    return { record: parseLog(await fs.readFile(target, "utf8")), dashboard, state };
+  });
+}
 export async function journalCheckpointConfirmed(input, { dataRoot = DEFAULT_DATA_ROOT } = {}) {
   only(input, new Set(["date", "substage", "message"]), "checkpoint confirmation");
   const confirmed = { date: date(input.date), substage: plain(input.substage, "checkpoint substage", { max: 3 }), message: plain(input.message, "checkpoint message", { max: 180 }), confirmed_by_user: true };
@@ -244,5 +280,5 @@ export async function journalProgress({ dataRoot = DEFAULT_DATA_ROOT } = {}) { c
 export async function journalRecent({ limit = 10, dataRoot = DEFAULT_DATA_ROOT } = {}) { if (!Number.isInteger(limit) || limit < 1 || limit > 50) fail("limit is invalid"); const logs = await entries(dataRoot); return logs.slice(-limit).reverse(); }
 export async function journalSummary({ end_date = new Date().toISOString().slice(0, 10), dataRoot = DEFAULT_DATA_ROOT } = {}) { return { window_days: 14, end_date: date(end_date), ...aggregate(windowEntries(await entries(dataRoot), end_date, 14)) }; }
 export async function journalReview({ stage, dataRoot = DEFAULT_DATA_ROOT } = {}) { if (!["D", "C"].includes(stage)) fail("review stage is invalid"); const logs = (await entries(dataRoot)).filter((entry) => stageGroup(entry.stage) === stage); const progress = await journalProgress({ dataRoot }); return { stage, timeline: logs.map((entry) => ({ date: entry.date, substage: entry.stage, minutes: entry.minutes, next_step: entry.next_step })), ...aggregate(logs), milestones: Object.fromEntries(Object.entries(progress.milestones).filter(([id]) => stageGroup(id) === stage)), verified_mandatory: progress.mandatory.source_status === "verified" ? progress.mandatory.counts : null }; }
-export async function main(argv = process.argv.slice(2)) { const [action, payload = "{}", ...extra] = argv; if (extra.length) fail("unexpected arguments"); let input; try { input = JSON.parse(payload); } catch { fail("payload must be JSON"); } if (!input || typeof input !== "object" || Array.isArray(input) || Object.hasOwn(input, "dataRoot")) fail("payload is invalid"); const allowed = { journal_initialize: [], journal_context: [], journal_record: null, journal_checkpoint_confirmed: ["date", "substage", "message"], journal_closure_context: ["stage"], journal_closure_record: ["stage", "highlights", "revisit", "redo"], journal_progress: [], journal_recent: ["limit"], journal_summary: ["end_date"], journal_review: ["stage"] }; if (!(action in allowed)) fail("unsupported action"); if (allowed[action] && Object.keys(input).some((key) => !allowed[action].includes(key))) fail("payload has unknown fields"); const calls = { journal_initialize: () => journalInitialize(input), journal_context: () => journalContext(), journal_record: () => journalRecord(input), journal_checkpoint_confirmed: () => journalCheckpointConfirmed(input), journal_closure_context: () => journalClosureContext(input), journal_closure_record: () => journalClosureRecord(input), journal_progress: () => journalProgress(), journal_recent: () => journalRecent(input), journal_summary: () => journalSummary(input), journal_review: () => journalReview(input) }; process.stdout.write(`${JSON.stringify(await calls[action](), null, 2)}\n`); }
+export async function main(argv = process.argv.slice(2)) { const [action, payload = "{}", ...extra] = argv; if (extra.length) fail("unexpected arguments"); let input; try { input = JSON.parse(payload); } catch { fail("payload must be JSON"); } if (!input || typeof input !== "object" || Array.isArray(input) || Object.hasOwn(input, "dataRoot")) fail("payload is invalid"); const allowed = { journal_initialize: [], journal_context: [], journal_record: null, journal_update: ["date", "patch"], journal_checkpoint_confirmed: ["date", "substage", "message"], journal_closure_context: ["stage"], journal_closure_record: ["stage", "highlights", "revisit", "redo"], journal_progress: [], journal_recent: ["limit"], journal_summary: ["end_date"], journal_review: ["stage"] }; if (!(action in allowed)) fail("unsupported action"); if (allowed[action] && Object.keys(input).some((key) => !allowed[action].includes(key))) fail("payload has unknown fields"); const calls = { journal_initialize: () => journalInitialize(input), journal_context: () => journalContext(), journal_record: () => journalRecord(input), journal_update: () => journalUpdate(input), journal_checkpoint_confirmed: () => journalCheckpointConfirmed(input), journal_closure_context: () => journalClosureContext(input), journal_closure_record: () => journalClosureRecord(input), journal_progress: () => journalProgress(), journal_recent: () => journalRecent(input), journal_summary: () => journalSummary(input), journal_review: () => journalReview(input) }; process.stdout.write(`${JSON.stringify(await calls[action](), null, 2)}\n`); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`Error: ${error.message}\n`); process.exitCode = 1; });

@@ -11,7 +11,7 @@ const source = await readFile(new URL("../index.html", import.meta.url), "utf8")
 const start = source.indexOf("const form=document.querySelector('#chat-form')");
 const script = source.slice(start, source.indexOf("</script>", start));
 const clearAt = script.indexOf("input.value='';");
-const fetchAt = script.indexOf("fetch('/api/chat'");
+const fetchAt = script.indexOf("fetch('/api/chat-stream'");
 
 assert.ok(start >= 0);
 assert.ok(clearAt >= 0 && clearAt < fetchAt, "only the submitted draft is cleared before the request");
@@ -31,6 +31,7 @@ assert.match(source, /if\(page==='chat'\)\{closeRail\(\);refreshConversations\(\
 assert.match(source, /id="chat-file-input" type="file" multiple/, "Chat exposes a multi-file picker");
 assert.match(script, /MAX_ATTACHMENTS=3,MAX_ATTACHMENT_BYTES=8\*1024\*1024,MAX_ATTACHMENT_TOTAL=12\*1024\*1024/, "client file caps mirror Bridge policy");
 assert.match(script, /Promise\.all\(sendingFiles\.map\(encodeAttachment\)\)/, "selected files are encoded only for the submitted turn");
+assert.match(script, /fetch\('\/api\/chat-stream'/, "Chat uses the existing streaming turn presentation path");
 assert.match(script, /JSON\.stringify\(\{conversationId:sendingConversation,message,attachments,newConversation\}\)/, "Chat forwards attachments and explicit first-turn provenance with the active Conversation");
 assert.match(script, /function chatFailureMessage\(failure\).*\^ATTACHMENT/, "only declared attachment errors use attachment guidance");
 assert.doesNotMatch(script, /没有发送成功。请确认 Autumn 已连接、附件符合限制后重试。/, "generic send failures are not mislabeled as attachment failures");
@@ -39,7 +40,7 @@ assert.match(source, /\/api\/files\/returned\//, "returned files expose a downlo
 assert.doesNotMatch(source, /setInterval\(/, "Companion status does not add background polling");
 
 assert.match(script, /const pinned=conversations\.find\(item=>item\.id===activeConversationId\)/, "sessions.list lag cannot silently switch the active Conversation");
-assert.match(script, /payload\.conversationKey!==expectedKey/, "Chat rejects any conversation routing mismatch");
+assert.match(script, /event\.conversationKey!==expectedKey/, "Chat rejects any conversation routing mismatch");
 assert.match(source, /data\.conversationKey!==expectedKey/, "Talk rejects any conversation routing mismatch");
 assert.match(source, /newConversation/, "Chat and Talk mark only explicit newly-created Conversations for first-turn auto-title");
 assert.match(source, /replyAttachments/, "assistant-returned files are surfaced in the current Chat turn");
@@ -82,7 +83,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-assert.match(worker, /autumn-companion-shell-v26/);
+assert.match(worker, /autumn-companion-shell-v27/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -207,7 +208,7 @@ test('mobile uses Chat-first Companion instead of compressed Spatial', async () 
   assert.match(index, /src="\/mobile_companion\.mjs"/);
   assert.doesNotMatch(index, /src="\/mobile_shell\.mjs"/);
   assert.ok(index.indexOf('src="/eyes.mjs"') < index.indexOf('src="/mobile_companion.mjs"'), 'Eyes must load before Mobile Companion');
-  assert.match(sw, /autumn-companion-shell-v26/);
+  assert.match(sw, /autumn-companion-shell-v27/);
   assert.match(sw, /"\/mobile_companion\.mjs"/);
 });
 
@@ -352,7 +353,7 @@ test("conversation soft archive is explicit, conservative, and Main is protected
   assert.match(html, /activeConversationId='main'/, "archiving active Conversation returns to Main");
   assert.match(html, /归档 Conversation 失败/);
   assert.match(html, /当前回复还在进行中，请稍后再归档对话/);
-  assert.match(html, /globalThis\.autumnPresentUiHints\?\.\(payload\.uiHints\)/, "Chat presents spatial objects from structured uiHints");
+  assert.match(html, /globalThis\.autumnPresentUiHints\?\.\(event\.uiHints\)/, "Chat presents spatial objects from structured uiHints");
   assert.match(html, /event\.type==='ui'/, "streaming Talk presents tool-driven spatial hints");
   assert.match(html, /fetch\(\'\/api\/barge-intent\'/, "Barge-in uses an STT intent gate before aborting playback");
 });

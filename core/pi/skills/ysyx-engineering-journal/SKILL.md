@@ -1,7 +1,7 @@
 ---
 name: ysyx-engineering-journal
-version: 0.1.1
-description: "Canonical 一生一芯 / YSYX D/C 学习日志：记录今天学习、学习进度、最近日志、两周总结、D/C 复习。命中这些组合时先 journal_context，不走 general memory。"
+version: 0.2.0
+description: "Canonical 一生一芯 / YSYX D/C 学习日志：记录、修改/纠正/补充旧日志、学习进度、最近日志、两周总结、D/C 复习。命中这些组合时先 journal_context，不走 general memory。"
 ---
 
 # 一生一芯工程学习日志
@@ -55,6 +55,12 @@ node /home/xyzlh/.openclaw/workspace/tools/ysyx_journal.mjs journal_context "{}"
 - 不保存内部推理、命令记录或 VM 凭据。
 
 确认事实后仅调用 `journal_record`。同日已有记录时，如实提示，不能静默覆盖。
+
+## 修改已有日志
+
+“修改”“纠正”“补充”“把之前那条改成”“昨天/刚才那条日志”属于更新意图。仍先运行 `journal_context`，再唯一解析日期；日期不明确时询问用户，绝不使用 general memory 猜测。
+
+只调用显式的 `journal_update`，例如 `journal_update {"date":"2026-09-12","patch":{"completed":[...]}}`。它是字段级 patch，不能传 date，不能直接编辑 Markdown，也不能把 `journal_record` 当成 overwrite。成功后自然确认修改内容；若返回 `dashboard.status=stale`，说明日志已保存而 Dashboard 暂未更新。
 
 只有在 `journal_record` 成功返回后，才能说“已记录”。绝不能把草稿、推测或模型回复当成已写入日志。
 

@@ -277,7 +277,13 @@ function installStyles() {
   .spatial-chat-collapse{
     width:30px;height:30px;border:0;border-radius:9px;background:rgba(255,255,255,.07);color:#fff;margin-left:5px
   }
+  .spatial-chat-expand{width:30px;height:30px;border:0;border-radius:9px;background:rgba(255,255,255,.07);color:#fff;margin-left:5px}
   #autumn-spatial-root.chat-collapsed{grid-template-columns:64px minmax(0,1fr) 54px}
+  #autumn-spatial-root.chat-focus{grid-template-columns:64px minmax(0,1fr)}
+  #autumn-spatial-root.chat-focus .spatial-main{display:none}
+  #autumn-spatial-root.chat-focus .spatial-chat-host{grid-column:2;padding:14px 18px;overflow:visible}
+  #autumn-spatial-root.chat-focus .spatial-chat-host .chat-shell{max-width:940px;margin:0 auto}
+  #autumn-spatial-root.chat-focus .spatial-chat-host .chat-pane{border-radius:26px!important}
   #autumn-spatial-root.chat-collapsed .spatial-chat-host{padding-right:8px}
   #autumn-spatial-root.chat-collapsed .spatial-chat-host .chat-pane-head{height:100%;padding:8px!important;display:flex;flex-direction:column;align-items:center!important;justify-content:flex-start!important}
   #autumn-spatial-root.chat-collapsed .spatial-chat-host .chat-head-actions,
@@ -528,6 +534,12 @@ function installSpatialShell() {
   chatCollapse.innerHTML = `<span class="expanded-glyph">›</span><span class="collapsed-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span><span class="collapsed-label">CHAT</span>`;
   chatCollapse.title = "折叠 Conversation";
   chatHead?.append(chatCollapse);
+  const chatExpand = document.createElement("button");
+  chatExpand.type = "button";
+  chatExpand.className = "spatial-chat-expand";
+  chatExpand.textContent = "⛶";
+  chatExpand.title = "放大 Chat";
+  chatHead?.append(chatExpand);
 
   const visionObject = document.createElement("section");
   visionObject.className = "spatial-object spatial-vision-object resizable hidden";
@@ -930,6 +942,17 @@ function installSpatialShell() {
     toggleContextPop(false);
     if (isMobile()) root.classList.toggle("mobile-chat-collapsed");
     else root.classList.toggle("chat-collapsed");
+  });
+  const setChatFocus = (open) => {
+    if (isMobile()) return;
+    root.classList.toggle("chat-focus", open);
+    root.classList.remove("chat-collapsed");
+    chatExpand.textContent = open ? "⤢" : "⛶";
+    chatExpand.title = open ? "退出 Chat 专注模式" : "放大 Chat";
+  };
+  chatExpand.addEventListener("click", () => setChatFocus(!root.classList.contains("chat-focus")));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && root.classList.contains("chat-focus")) setChatFocus(false);
   });
   document.querySelector("#chat-input")?.addEventListener("focus", () => {
     if (isMobile()) {
