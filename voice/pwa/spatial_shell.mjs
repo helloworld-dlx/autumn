@@ -277,7 +277,8 @@ function installStyles() {
   .spatial-chat-collapse{
     width:30px;height:30px;border:0;border-radius:9px;background:rgba(255,255,255,.07);color:#fff;margin-left:5px
   }
-  .spatial-chat-expand{width:30px;height:30px;border:0;border-radius:9px;background:rgba(255,255,255,.07);color:#fff;margin-left:5px}
+  .spatial-chat-controls{display:flex;align-items:center;gap:5px;margin-left:auto}.spatial-chat-collapse,.spatial-chat-expand{margin-left:0}
+  .spatial-chat-expand{width:30px;height:30px;border:0;border-radius:9px;background:rgba(255,255,255,.07);color:#fff}
   #autumn-spatial-root.chat-collapsed{grid-template-columns:64px minmax(0,1fr) 54px}
   #autumn-spatial-root.chat-focus{grid-template-columns:64px minmax(0,1fr)}
   #autumn-spatial-root.chat-focus .spatial-main{display:none}
@@ -528,18 +529,21 @@ function installSpatialShell() {
   if (devicesPage) utilityDevices.append(devicesPage);
 
   const chatHead = chatShell.querySelector(".chat-pane-head");
+  const chatControls = document.createElement("div");
+  chatControls.className = "spatial-chat-controls";
+  chatHead?.append(chatControls);
   const chatCollapse = document.createElement("button");
   chatCollapse.type = "button";
   chatCollapse.className = "spatial-chat-collapse";
   chatCollapse.innerHTML = `<span class="expanded-glyph">›</span><span class="collapsed-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span><span class="collapsed-label">CHAT</span>`;
   chatCollapse.title = "折叠 Conversation";
-  chatHead?.append(chatCollapse);
+  chatControls.append(chatCollapse);
   const chatExpand = document.createElement("button");
   chatExpand.type = "button";
   chatExpand.className = "spatial-chat-expand";
   chatExpand.textContent = "⛶";
   chatExpand.title = "放大 Chat";
-  chatHead?.append(chatExpand);
+  chatControls.append(chatExpand);
 
   const visionObject = document.createElement("section");
   visionObject.className = "spatial-object spatial-vision-object resizable hidden";

@@ -83,7 +83,7 @@ assert.match(bridge, /\/api\/companion\/status/);
 assert.match(bridge, /\/api\/files\/returned/);
 assert.match(gateway, /attachments,/);
 assert.match(gateway, /client\.request\("chat\.send"/);
-assert.match(worker, /autumn-companion-shell-v27/);
+assert.match(worker, /autumn-companion-shell-v28/);
 assert.match(worker, /\/barge_in\.mjs/);
 assert.match(worker, /\/eyes\.mjs/);
 assert.match(worker, /\/spatial_shell\.mjs/);
@@ -208,7 +208,7 @@ test('mobile uses Chat-first Companion instead of compressed Spatial', async () 
   assert.match(index, /src="\/mobile_companion\.mjs"/);
   assert.doesNotMatch(index, /src="\/mobile_shell\.mjs"/);
   assert.ok(index.indexOf('src="/eyes.mjs"') < index.indexOf('src="/mobile_companion.mjs"'), 'Eyes must load before Mobile Companion');
-  assert.match(sw, /autumn-companion-shell-v27/);
+assert.match(sw, /autumn-companion-shell-v28/);
   assert.match(sw, /"\/mobile_companion\.mjs"/);
 });
 

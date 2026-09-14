@@ -345,7 +345,7 @@ for await (const line of lines) {
     const attachments = request.source === "chat" && Array.isArray(request.attachments) ? request.attachments : [];
     const startedAt = Date.now();
     const canonicalSessionKey = `agent:main:${request.sessionKey}`;
-    const stream = request.source === "voice" && request.stream === true;
+    const stream = request.stream === true;
     const requestId = typeof request.requestId === "string" && request.requestId ? request.requestId : randomUUID();
     const result = await sendAndWait(
       canonicalSessionKey,
