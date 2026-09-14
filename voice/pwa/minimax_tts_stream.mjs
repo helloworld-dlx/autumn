@@ -7,6 +7,7 @@ const AUTH_MODULE = 'file:///home/xyzlh/openclaw_workspace/node_modules/openclaw
 const API_URL = 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions';
 const MODEL = 'mimo-v2.5-tts';
 const VOICE_ID = '冰糖';
+const AUTUMN_TTS_WORK_STYLE = '你正在为 Autumn 配音。使用成熟、自信、从容的年轻中文女性声音，像长期协作的私人秘书兼 Chief of Staff。声音有质感和掌控感，但不冷艳、傲慢或刻意压低嗓音；与对方熟悉亲近，偶尔带一点自然、低频的俏皮和笑意。工作状态保持稳重、有条理，整体语速中等偏慢，句间自然停顿，重要结论轻微强调。技术名词、数字、英文缩写和路径清晰准确。避免客服腔、播音腔、甜妹、夹子音、撒娇、过度性感、刻意暧昧、紧张或慌乱。像已经把事情想清楚、整理好材料后，再不慌不忙地告诉对方结果。';
 
 export function extractJsonObjects(text) {
   const objects = [];
@@ -89,7 +90,7 @@ async function streamSpeech(text) {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ model: MODEL, messages: [{ role: 'assistant', content: text }], audio: { format: 'wav', voice: VOICE_ID } }),
+      body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: AUTUMN_TTS_WORK_STYLE }, { role: 'assistant', content: text }], audio: { format: 'wav', voice: VOICE_ID } }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`XIAOMI_TTS_HTTP_${response.status}`);

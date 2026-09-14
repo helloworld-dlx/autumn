@@ -273,6 +273,9 @@ class VoiceBridgeTests(unittest.TestCase):
         self.assertIn("https://token-plan-cn.xiaomimimo.com/v1/chat/completions", source)
         self.assertIn("model: 'mimo-v2.5-tts'", source)
         self.assertIn("audio: { format: 'wav', voice: '冰糖' }", source)
+        self.assertIn("AUTUMN_TTS_WORK_STYLE", source)
+        self.assertIn("role: 'user', content: __AUTUMN_TTS_WORK_STYLE__", source)
+        self.assertIn("role: 'assistant', content: text", source)
         self.assertNotIn("api.minimaxi.com", source)
 
     def test_public_response_has_no_credentials(self):

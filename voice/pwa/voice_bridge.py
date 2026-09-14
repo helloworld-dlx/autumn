@@ -38,6 +38,13 @@ MAX_CHAT_ATTACHMENT_TOTAL_BYTES = 12 * 1024 * 1024
 MAX_CHAT_ATTACHMENTS = 3
 MAX_CHAT_REQUEST_BYTES = 17 * 1024 * 1024
 MAX_HISTORY_MESSAGES = 40
+AUTUMN_TTS_WORK_STYLE = (
+    "你正在为 Autumn 配音。使用成熟、自信、从容的年轻中文女性声音，像长期协作的私人秘书兼 Chief of Staff。"
+    "声音有质感和掌控感，但不冷艳、傲慢或刻意压低嗓音；与对方熟悉亲近，偶尔带一点自然、低频的俏皮和笑意。"
+    "工作状态保持稳重、有条理，整体语速中等偏慢，句间自然停顿，重要结论轻微强调。"
+    "技术名词、数字、英文缩写和路径清晰准确。避免客服腔、播音腔、甜妹、夹子音、撒娇、过度性感、刻意暧昧、紧张或慌乱。"
+    "像已经把事情想清楚、整理好材料后，再不慌不忙地告诉对方结果。"
+)
 AUDIO_TTL_SECONDS = 600
 AUDIO_STREAM_TTL_SECONDS = 180
 AUDIOS: dict[str, tuple[Path, float]] = {}
@@ -502,6 +509,7 @@ def siliconflow_transcribe(audio: bytes, filename: str, content_type: str) -> st
 def mimo_tts(text: str) -> Path:
     MEDIA.mkdir(mode=0o700, exist_ok=True)
     output = MEDIA / f"{uuid.uuid4().hex}.wav"
+    style = json.dumps(AUTUMN_TTS_WORK_STYLE, ensure_ascii=False)
     helper = """import fs from 'node:fs';
 const [output, text] = process.argv.slice(2);
 const cfg = JSON.parse(fs.readFileSync('/home/xyzlh/.openclaw/openclaw.json', 'utf8'));
@@ -510,7 +518,7 @@ const apiKey = await auth.s({ cfg, provider: 'xiaomi-coding' });
 if (!apiKey) throw new Error('XIAOMI_TTS_AUTH_UNAVAILABLE');
 const response = await fetch('https://token-plan-cn.xiaomimimo.com/v1/chat/completions', {
   method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ model: 'mimo-v2.5-tts', messages: [{ role: 'assistant', content: text }], audio: { format: 'wav', voice: '冰糖' } }),
+  body: JSON.stringify({ model: 'mimo-v2.5-tts', messages: [{ role: 'user', content: __AUTUMN_TTS_WORK_STYLE__ }, { role: 'assistant', content: text }], audio: { format: 'wav', voice: '冰糖' } }),
 });
 if (!response.ok) throw new Error(`XIAOMI_TTS_HTTP_${response.status}`);
 const payload = await response.json();
@@ -520,6 +528,7 @@ const audio = Buffer.from(encoded, 'base64');
 if (audio.length < 128) throw new Error('XIAOMI_TTS_AUDIO_INVALID');
 fs.writeFileSync(output, audio, { mode: 0o600 });
 """
+    helper = helper.replace("__AUTUMN_TTS_WORK_STYLE__", style)
     try:
         result = subprocess.run(["/usr/bin/node", "--input-type=module", "-", str(output), text], input=helper,
                                 capture_output=True, text=True, timeout=120, check=False)
