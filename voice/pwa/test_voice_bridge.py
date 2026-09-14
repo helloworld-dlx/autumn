@@ -409,6 +409,18 @@ class VoiceBridgeTests(unittest.TestCase):
             rows = [{"id":"c_auto","label":"","preview":"","updatedAt":"2026-08-16T08:00:00Z"}]
             result = bridge.process_conversations(lambda: rows, path)
             self.assertEqual(result["conversations"][1]["title"], "FPGA 的桶形移位器")
+
+    def test_manual_conversation_title_persists_without_changing_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "titles.json"
+            result = bridge.update_conversation_title("c_rename", "  新标题  ", path)
+            self.assertEqual(result["conversationKey"], "companion:c_rename")
+            self.assertEqual(result["title"], "新标题")
+            rows = [{"id": "c_rename", "label": "gateway-client", "preview": "旧标题"}]
+            listed = bridge.process_conversations(lambda: rows, path)
+            renamed = next(item for item in listed["conversations"] if item["id"] == "c_rename")
+            self.assertEqual(renamed["title"], "新标题")
+            with self.assertRaises(bridge.BridgeError): bridge.update_conversation_title("c_rename", "\n", path)
             raw = path.read_text("utf-8")
             self.assertNotIn("我想继续学习", raw)
             self.assertNotIn("第二条消息", raw)
