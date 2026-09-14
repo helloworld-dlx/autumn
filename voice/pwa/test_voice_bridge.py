@@ -266,6 +266,15 @@ class VoiceBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(bridge.BridgeError, 'synthesis'):
             bridge.process_turn(b"a", "a.webm", "audio/webm", "x", lambda *_: '你好', lambda *_: '回复', lambda *_: (_ for _ in ()).throw(bridge.BridgeError('XIAOMI_TTS_FAILED', 'synthesis failed')))
 
+    def test_mimo_tts_uses_token_plan_and_wav(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn("def mimo_tts(text: str)", source)
+        self.assertIn("provider: 'xiaomi-coding'", source)
+        self.assertIn("https://token-plan-cn.xiaomimimo.com/v1/chat/completions", source)
+        self.assertIn("model: 'mimo-v2.5-tts'", source)
+        self.assertIn("audio: { format: 'wav', voice: '冰糖' }", source)
+        self.assertNotIn("api.minimaxi.com", source)
+
     def test_public_response_has_no_credentials(self):
         with tempfile.TemporaryDirectory() as temp:
             p = Path(temp) / 'a.mp3'; p.write_bytes(b'a')

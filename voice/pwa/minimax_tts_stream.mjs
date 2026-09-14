@@ -4,9 +4,9 @@ import { once } from 'node:events';
 
 const CONFIG_PATH = '/home/xyzlh/.openclaw/openclaw.json';
 const AUTH_MODULE = 'file:///home/xyzlh/openclaw_workspace/node_modules/openclaw/dist/provider-auth-L08Tydtg.js';
-const API_URL = 'https://api.minimaxi.com/v1/t2a_v2';
-const MODEL = 'speech-2.8-turbo';
-const VOICE_ID = 'Chinese (Mandarin)_Warm_Girl';
+const API_URL = 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions';
+const MODEL = 'mimo-v2.5-tts';
+const VOICE_ID = '冰糖';
 
 export function extractJsonObjects(text) {
   const objects = [];
@@ -58,20 +58,11 @@ export function extractJsonObjects(text) {
 }
 
 export function audioFromPayload(payload) {
-  const statusCode = payload?.base_resp?.status_code;
-  if (Number.isFinite(statusCode) && statusCode !== 0) {
-    throw new Error(`MINIMAX_TTS_STATUS_${statusCode}`);
-  }
-  if (payload?.event === 'task_failed') {
-    throw new Error('MINIMAX_TTS_TASK_FAILED');
-  }
-  const hex = payload?.data?.audio;
-  if (typeof hex !== 'string' || !hex.length) return null;
-  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
-    throw new Error('MINIMAX_TTS_AUDIO_INVALID');
-  }
-  const audio = Buffer.from(hex, 'hex');
-  return audio.length ? audio : null;
+  const encoded = payload?.choices?.[0]?.message?.audio?.data;
+  if (typeof encoded !== 'string' || !encoded) throw new Error('XIAOMI_TTS_AUDIO_INVALID');
+  const audio = Buffer.from(encoded, 'base64');
+  if (audio.length < 128) throw new Error('XIAOMI_TTS_AUDIO_INVALID');
+  return audio;
 }
 
 async function writeBinary(buffer) {
@@ -81,8 +72,8 @@ async function writeBinary(buffer) {
 async function resolveApiKey() {
   const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
   const auth = await import(AUTH_MODULE);
-  const apiKey = await auth.s({ cfg, provider: 'minimax' });
-  if (!apiKey) throw new Error('MINIMAX_AUTH_UNAVAILABLE');
+  const apiKey = await auth.s({ cfg, provider: 'xiaomi-coding' });
+  if (!apiKey) throw new Error('XIAOMI_TTS_AUTH_UNAVAILABLE');
   return apiKey;
 }
 
@@ -98,66 +89,20 @@ async function streamSpeech(text) {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: MODEL,
-        text,
-        stream: true,
-        voice_setting: {
-          voice_id: VOICE_ID,
-          speed: 1,
-          vol: 1,
-          pitch: 0,
-        },
-        audio_setting: {
-          sample_rate: 32000,
-          bitrate: 128000,
-          format: 'mp3',
-          channel: 1,
-        },
-        subtitle_enable: false,
-      }),
+      body: JSON.stringify({ model: MODEL, messages: [{ role: 'assistant', content: text }], audio: { format: 'wav', voice: VOICE_ID } }),
       signal: controller.signal,
     });
-    if (!response.ok || !response.body) throw new Error(`MINIMAX_TTS_HTTP_${response.status}`);
-
-    const decoder = new TextDecoder();
-    let pending = '';
-    let audioBytes = 0;
-    for await (const chunk of response.body) {
-      pending += decoder.decode(chunk, { stream: true });
-      const parsed = extractJsonObjects(pending);
-      pending = parsed.remainder;
-      for (const payload of parsed.objects) {
-        const audio = audioFromPayload(payload);
-        if (audio) {
-          audioBytes += audio.length;
-          await writeBinary(audio);
-        }
-      }
-    }
-    pending += decoder.decode();
-    const parsed = extractJsonObjects(pending);
-    for (const payload of parsed.objects) {
-      const audio = audioFromPayload(payload);
-      if (audio) {
-        audioBytes += audio.length;
-        await writeBinary(audio);
-      }
-    }
-    if (audioBytes < 128) throw new Error('MINIMAX_TTS_NO_AUDIO');
+    if (!response.ok) throw new Error(`XIAOMI_TTS_HTTP_${response.status}`);
+    await writeBinary(audioFromPayload(await response.json()));
   } finally {
     clearTimeout(timeout);
   }
 }
 
 function selfTest() {
-  const sample = 'data: {"data":{"audio":"49443304"},"base_resp":{"status_code":0}}\n' +
-    '{"data":{"audio":"ffe31122"},"base_resp":{"status_code":0}}';
-  const parsed = extractJsonObjects(sample);
-  if (parsed.objects.length !== 2) throw new Error('parser count');
-  const joined = Buffer.concat(parsed.objects.map(audioFromPayload).filter(Boolean));
-  if (joined.toString('hex') !== '49443304ffe31122') throw new Error('audio decode');
-  process.stderr.write('minimax_tts_stream self-test: PASS\n');
+  const payload = { choices: [{ message: { audio: { data: Buffer.alloc(128, 7).toString('base64') } } }] };
+  if (audioFromPayload(payload).length !== 128) throw new Error('audio decode');
+  process.stderr.write('mimo_tts_stream self-test: PASS\n');
 }
 
 if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {

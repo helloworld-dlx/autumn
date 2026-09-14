@@ -90,7 +90,7 @@ PRESENCE_STATUS_RE = re.compile(r"(?:在线|离线|在不在线|是否连接|连
 class AudioStream:
     """Small in-memory fan-out for one progressive MP3 response.
 
-    MiniMax produces bytes in a background process. The browser can attach
+    MiMo produces bytes in a background process. The browser can attach
     after the first bytes are ready and receives already-buffered bytes followed
     by live bytes. Streams are one-shot and bounded by a short TTL.
     """
@@ -132,7 +132,7 @@ class AudioStream:
 
     def fail(self, message: str) -> None:
         with self.condition:
-            self.error = message or "MiniMax streaming TTS failed"
+            self.error = message or "MiMo streaming TTS failed"
             self.done = True
             self.condition.notify_all()
 
@@ -499,31 +499,36 @@ def siliconflow_transcribe(audio: bytes, filename: str, content_type: str) -> st
     return text.strip()
 
 
-def minimax_tts(text: str) -> Path:
+def mimo_tts(text: str) -> Path:
     MEDIA.mkdir(mode=0o700, exist_ok=True)
-    output = MEDIA / f"{uuid.uuid4().hex}.mp3"
-    # This is the existing bundled MiniMax TTS helper path previously smoke-tested
-    # on this Pi.  It is not a new SDK client or a shell command.
+    output = MEDIA / f"{uuid.uuid4().hex}.wav"
     helper = """import fs from 'node:fs';
 const [output, text] = process.argv.slice(2);
 const cfg = JSON.parse(fs.readFileSync('/home/xyzlh/.openclaw/openclaw.json', 'utf8'));
 const auth = await import('file:///home/xyzlh/openclaw_workspace/node_modules/openclaw/dist/provider-auth-L08Tydtg.js');
-const tts = await import('file:///home/xyzlh/openclaw_workspace/node_modules/openclaw/dist/tts-CNLIRC78.js');
-const apiKey = await auth.s({ cfg, provider: 'minimax' });
-if (!apiKey) throw new Error('MINIMAX_AUTH_UNAVAILABLE');
-const audio = await tts.i({ text, apiKey, baseUrl: 'https://api.minimaxi.com', model: 'speech-2.8-turbo', voiceId: 'Chinese (Mandarin)_Warm_Girl', format: 'mp3', sampleRate: 32000, timeoutMs: 45000 });
-if (!Buffer.isBuffer(audio) || audio.length < 128) throw new Error('TTS_AUDIO_INVALID');
+const apiKey = await auth.s({ cfg, provider: 'xiaomi-coding' });
+if (!apiKey) throw new Error('XIAOMI_TTS_AUTH_UNAVAILABLE');
+const response = await fetch('https://token-plan-cn.xiaomimimo.com/v1/chat/completions', {
+  method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ model: 'mimo-v2.5-tts', messages: [{ role: 'assistant', content: text }], audio: { format: 'wav', voice: '冰糖' } }),
+});
+if (!response.ok) throw new Error(`XIAOMI_TTS_HTTP_${response.status}`);
+const payload = await response.json();
+const encoded = payload?.choices?.[0]?.message?.audio?.data;
+if (typeof encoded !== 'string' || !encoded) throw new Error('XIAOMI_TTS_AUDIO_INVALID');
+const audio = Buffer.from(encoded, 'base64');
+if (audio.length < 128) throw new Error('XIAOMI_TTS_AUDIO_INVALID');
 fs.writeFileSync(output, audio, { mode: 0o600 });
 """
     try:
         result = subprocess.run(["/usr/bin/node", "--input-type=module", "-", str(output), text], input=helper,
                                 capture_output=True, text=True, timeout=120, check=False)
     except subprocess.TimeoutExpired as exc:
-        raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax speech synthesis timed out") from exc
+        raise BridgeError("XIAOMI_TTS_FAILED", "MiMo speech synthesis timed out") from exc
     if result.returncode:
-        raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax speech synthesis failed")
+        raise BridgeError("XIAOMI_TTS_FAILED", "MiMo speech synthesis failed")
     if not output.is_file() or output.stat().st_size == 0:
-        raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax returned no audio")
+        raise BridgeError("XIAOMI_TTS_FAILED", "MiMo returned no audio")
     return output
 
 
@@ -534,7 +539,7 @@ def register_audio(path: Path) -> str:
     return f"/api/audio/{token}"
 
 
-def _run_minimax_tts_stream(text: str, stream: AudioStream) -> None:
+def _run_mimo_tts_stream(text: str, stream: AudioStream) -> None:
     process: subprocess.Popen[bytes] | None = None
     try:
         process = subprocess.Popen(
@@ -544,7 +549,7 @@ def _run_minimax_tts_stream(text: str, stream: AudioStream) -> None:
         )
         stream.attach_process(process)
         if process.stdout is None:
-            raise RuntimeError("MiniMax TTS stream stdout unavailable")
+            raise RuntimeError("MiMo TTS stream stdout unavailable")
         while True:
             chunk = os.read(process.stdout.fileno(), 8192)
             if not chunk:
@@ -562,9 +567,9 @@ def _run_minimax_tts_stream(text: str, stream: AudioStream) -> None:
         returncode = process.wait(timeout=5)
         if returncode != 0:
             detail = stderr.decode("utf-8", "replace").strip().splitlines()[-1:]
-            raise RuntimeError(detail[0] if detail else "MiniMax streaming TTS helper failed")
+            raise RuntimeError(detail[0] if detail else "MiMo streaming TTS helper failed")
         if stream.byte_count < 128:
-            raise RuntimeError("MiniMax streaming TTS returned no audio")
+            raise RuntimeError("MiMo streaming TTS returned no audio")
         stream.finish()
     except Exception as exc:
         if process is not None and process.poll() is None:
@@ -587,22 +592,22 @@ def cleanup_audio_streams() -> None:
         stream.cancel()
 
 
-def minimax_tts_stream(text: str, first_byte_timeout: float = 8.0) -> str:
+def mimo_tts_stream(text: str, first_byte_timeout: float = 8.0) -> str:
     if not isinstance(text, str) or not text.strip():
-        raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax speech synthesis text was empty")
+        raise BridgeError("XIAOMI_TTS_FAILED", "MiMo speech synthesis text was empty")
     if not TTS_STREAM_HELPER.is_file():
-        raise BridgeError("MINIMAX_TTS_FAILED", "MiniMax streaming TTS helper is unavailable")
+        raise BridgeError("XIAOMI_TTS_FAILED", "MiMo streaming TTS helper is unavailable")
     stream = AudioStream()
     token = uuid.uuid4().hex
     with AUDIO_STREAMS_LOCK:
         AUDIO_STREAMS[token] = stream
     cleanup_audio_streams()
-    threading.Thread(target=_run_minimax_tts_stream, args=(text, stream), daemon=True).start()
+    threading.Thread(target=_run_mimo_tts_stream, args=(text, stream), daemon=True).start()
     if not stream.wait_first(first_byte_timeout):
         with AUDIO_STREAMS_LOCK:
             AUDIO_STREAMS.pop(token, None)
         stream.cancel()
-        raise BridgeError("MINIMAX_TTS_STREAM_FAILED", stream.error or "MiniMax streaming TTS produced no first audio")
+        raise BridgeError("XIAOMI_TTS_STREAM_FAILED", stream.error or "MiMo streaming TTS produced no first audio")
     return f"/api/audio-stream/{token}"
 
 
@@ -944,7 +949,7 @@ def process_restore_conversation(conversation_id: str, path: Path = CONVERSATION
 
 
 def process_turn(audio: bytes, filename: str, mime: str, requested_conversation: str | None,
-                 stt=siliconflow_transcribe, autumn=autumn_turn, tts=minimax_tts,
+                 stt=siliconflow_transcribe, autumn=autumn_turn, tts=mimo_tts,
                  title_path: Path = CONVERSATION_TITLES_PATH, new_conversation: bool = False,
                  history=GATEWAY.history, metadata_path: Path = ATTACHMENT_META_PATH,
                  transfer_root: Path = TRANSFER_ROOT) -> dict[str, object]:
@@ -995,8 +1000,8 @@ def process_turn(audio: bytes, filename: str, mime: str, requested_conversation:
 
 
 def process_turn_stream(audio: bytes, filename: str, mime: str, requested_conversation: str | None, emit,
-                        stt=siliconflow_transcribe, autumn_stream=autumn_turn_stream, tts=minimax_tts,
-                        tts_stream=minimax_tts_stream,
+                        stt=siliconflow_transcribe, autumn_stream=autumn_turn_stream, tts=mimo_tts,
+                        tts_stream=mimo_tts_stream,
                         title_path: Path = CONVERSATION_TITLES_PATH, new_conversation: bool = False,
                         history=GATEWAY.history, metadata_path: Path = ATTACHMENT_META_PATH,
                         transfer_root: Path = TRANSFER_ROOT) -> dict[str, object]:
@@ -1904,7 +1909,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Type", "audio/wav")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Accept-Ranges", "none")
             self.send_header("X-Accel-Buffering", "no")
@@ -1925,7 +1930,8 @@ class Handler(BaseHTTPRequestHandler):
             item = AUDIOS.get(self.path.rsplit("/", 1)[-1])
             if not item or not item[0].is_file(): self.send_error(404); return
             data = item[0].read_bytes()
-            self.send_response(200); self.send_header("Content-Type", "audio/mpeg"); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(data); return
+            content_type = "audio/wav" if item[0].suffix.lower() == ".wav" else "audio/mpeg"
+            self.send_response(200); self.send_header("Content-Type", content_type); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(data); return
         self.send_error(404)
 
     def do_POST(self) -> None:
